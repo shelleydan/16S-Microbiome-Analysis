@@ -42,6 +42,8 @@ pair = TRUE
 
 ## Taxonomic Variables
 tax_level <- "Class" 
+
+ANCOMBC_list <- c("RGF1", "RGF2", "RGF3")
 ```
 
 ```{r generate_output_directories, include = FALSE}
@@ -198,6 +200,7 @@ METADATA_TABLE <- read.csv(metadata_path,
 # Match Metadata Sample IDs to those in the feature table
 METADATA_TABLE <- METADATA_TABLE[rownames(METADATA_TABLE) %in% colnames(FEATURE_TABLE_CLEAN), ]
 METADATA_TABLE$Sample.name <- rownames(METADATA_TABLE)
+METADATA_TABLE[[group]] <- as.factor(METADATA_TABLE[[group]])
 
 METADATA_TABLE <- sample_data(METADATA_TABLE)
 
@@ -226,7 +229,7 @@ max_lib   <- max(lib_sizes)
 
 # Start with your candidate depths
 depths <- seq(min_lib, max_lib, by = 100)
-sample_var <- group 
+sample_var <- group
 
 # Initialize list
 richness_list <- list()
@@ -234,7 +237,7 @@ richness_list <- list()
 for (d in depths) {
   set.seed(2006576)
   rare_dat <- rarefy_even_depth(dat, sample.size = d, rngseed = 2006576, verbose = FALSE, replace = FALSE)
-  
+
   richness <- estimate_richness(rare_dat, measures = "Observed")
   richness$SampleID <- rownames(richness)
   richness$Depth <- d
@@ -402,15 +405,15 @@ axis_order =  phyloseq::sample_data(PHYLOSEQ_OBJ)$type %>%unique();axis_order
   colnames(mapping) = gsub(group,"AA", colnames(mapping))
   mapping$Group = mapping$AA
   mapping$Group = as.factor(mapping$Group)
-  
-  # mapping$Group 
+
+  # mapping$Group
   count = as.data.frame(t(ggClusterNet::vegan_otu(ps11)))
   alpha=vegan::diversity(count, "shannon")
   x = t(count)
-  
-  Shannon = vegan::diversity(x)  
+
+  Shannon = vegan::diversity(x)
   Inv_Simpson <- vegan::diversity(x, index = "invsimpson")
-  S <- vegan::specnumber(x);S 
+  S <- vegan::specnumber(x);S
   S2 = rowSums(x>0)
 
 Pielou_evenness <- Shannon/log(S)
@@ -421,7 +424,7 @@ Pielou_evenness <- Shannon/log(S)
   Chao1 <- est[2, ]
   ACE <- est[4, ]
   report = cbind(Shannon, Inv_Simpson, Pielou_evenness, Simpson_evenness,
-                 Richness, Chao1,ACE) 
+                 Richness, Chao1,ACE)
   head(report)
 
 alp = merge(mapping,report , by="row.names",all=F)
@@ -447,350 +450,349 @@ write.csv(index,FileName,sep = "")
 ```
 
 ```{r generating_alpha_plot, include = FALSE}
-## Generate a Alpha Box Plot
+ ## Generate a Alpha Box Plot
 
-result1 = EasyStat::FacetMuiPlotresultBox(data = data,num = c(3:9),
-                                result = result,
-                                sig_show ="abc",ncol = 3 )
+ result1 = EasyStat::FacetMuiPlotresultBox(data = data,num = c(3:9),
+                                 result = result,
+                                 sig_show ="abc",ncol = 3 )
 
-p1_1 = result1[[2]] %>% ggplot(aes(x=group , y=dd )) + 
-  geom_boxplot(alpha=1, aes(fill=group)) +
-  geom_point(aes(color = group), size=3, alpha=0.5)+
-  labs(x="", y="")+
-  facet_wrap(.~name,scales="free_y",ncol  = 3) +
-  ggplot2::scale_x_discrete(limits = axis_order) + 
-  guides(color=guide_legend(title = NULL),
-         shape=guide_legend(title = NULL),
-         fill = guide_legend(title = NULL)
-         ) + 
-  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
+ p1_1 = result1[[2]] %>% ggplot(aes(x=group , y=dd )) +
+   geom_boxplot(alpha=1, aes(fill=group)) +
+   geom_point(aes(color = group), size=3, alpha=0.5)+
+   labs(x="", y="")+
+   facet_wrap(.~name,scales="free_y",ncol  = 3) +
+   ggplot2::scale_x_discrete(limits = axis_order) +
+   guides(color=guide_legend(title = NULL),
+          shape=guide_legend(title = NULL),
+          fill = guide_legend(title = NULL)
+          ) +
+   theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
 
-FileName <- paste(alppath,"Alpha_box", ".svg", sep = "")
-ggsave(FileName, p1_1, width = 15, height = 15, limitsize = FALSE)
+ FileName <- paste(alppath,"Alpha_box", ".svg", sep = "")
+ ggsave(FileName, p1_1, width = 15, height = 15, limitsize = FALSE)
 ```
 
-#### Alpha Diversity Measures
+ #### Alpha Diversity Measures
 
 ```{r plotting_diversity_to_RMD, fig.width=10, fig.height=10}
-p1_1
+ p1_1
 ```
 
-#### Statistical Analysis
+ #### Statistical Analysis
 ```{r ANOVA_on_Alpha}
-## Perform and Extract Comparison Information
+ ## Perform and Extract Comparison Information
 
-# ANOVA for each metric 
+ # ANOVA for each metric
 
-anova_Shannon <- anova_test(data = index, Shannon ~ AA) %>%
-  get_anova_table() %>%
-  as_tibble() %>%                # Convert to tibble
-  mutate(metric = "Shannon")
+ anova_Shannon <- anova_test(data = index, Shannon ~ AA) %>%
+   get_anova_table() %>%
+   as_tibble() %>%                # Convert to tibble
+   mutate(metric = "Shannon")
 
-anova_InvSimpson <- anova_test(data = index, Inv_Simpson ~ AA) %>%
-  get_anova_table() %>%
-  as_tibble() %>%
-  mutate(metric = "Inv_Simpson")
+ anova_InvSimpson <- anova_test(data = index, Inv_Simpson ~ AA) %>%
+   get_anova_table() %>%
+   as_tibble() %>%
+   mutate(metric = "Inv_Simpson")
 
-anova_Pielou <- anova_test(data = index, Pielou_evenness ~ AA) %>%
-  get_anova_table() %>%
-  as_tibble() %>%
-  mutate(metric = "Pielou_evenness")
+ anova_Pielou <- anova_test(data = index, Pielou_evenness ~ AA) %>%
+   get_anova_table() %>%
+   as_tibble() %>%
+   mutate(metric = "Pielou_evenness")
 
-anova_Evenness <- anova_test(data = index, Simpson_evenness ~ AA) %>%
-  get_anova_table() %>%
-  as_tibble() %>%
-  mutate(metric = "Simpson_evenness")
+ anova_Evenness <- anova_test(data = index, Simpson_evenness ~ AA) %>%
+   get_anova_table() %>%
+   as_tibble() %>%
+   mutate(metric = "Simpson_evenness")
 
-anova_Richness <- anova_test(data = index, Richness ~ AA) %>%
-  get_anova_table() %>%
-  as_tibble() %>%
-  mutate(metric = "Richness")
+ anova_Richness <- anova_test(data = index, Richness ~ AA) %>%
+   get_anova_table() %>%
+   as_tibble() %>%
+   mutate(metric = "Richness")
 
-anova_Chao1 <- anova_test(data = index, Chao1 ~ AA) %>%
-  get_anova_table() %>%
-  as_tibble() %>%
-  mutate(metric = "Chao1")
+ anova_Chao1 <- anova_test(data = index, Chao1 ~ AA) %>%
+   get_anova_table() %>%
+   as_tibble() %>%
+   mutate(metric = "Chao1")
 
-anova_ACE <- anova_test(data = index, ACE ~ AA) %>%
-  get_anova_table() %>%
-  as_tibble() %>%
-  mutate(metric = "ACE")
+ anova_ACE <- anova_test(data = index, ACE ~ AA) %>%
+   get_anova_table() %>%
+   as_tibble() %>%
+   mutate(metric = "ACE")
 
-# Combine ANOVA results
-anova_all <- bind_rows(anova_Shannon, anova_InvSimpson, anova_Pielou, anova_Evenness,
-                       anova_Richness, anova_Chao1, anova_ACE)
+ # Combine ANOVA results
+ anova_all <- bind_rows(anova_Shannon, anova_InvSimpson, anova_Pielou, anova_Evenness,
+                        anova_Richness, anova_Chao1, anova_ACE)
 
-posthoc_all <- bind_rows(
-  tukey_hsd(index, Shannon ~ AA) %>% mutate(metric = "Shannon"),
-  tukey_hsd(index, Inv_Simpson ~ AA) %>% mutate(metric = "Inv_Simpson"),
-  tukey_hsd(index, Pielou_evenness ~ AA) %>% mutate(metric = "Pielou_evenness"),
-  tukey_hsd(index, Simpson_evenness ~ AA) %>% mutate(metric = "Simpson_evenness"),
-  tukey_hsd(index, Richness ~ AA) %>% mutate(metric = "Richness"),
-  tukey_hsd(index, Chao1 ~ AA) %>% mutate(metric = "Chao1"),
-  tukey_hsd(index, ACE ~ AA) %>% mutate(metric = "ACE")
-)
+ posthoc_all <- bind_rows(
+   tukey_hsd(index, Shannon ~ AA) %>% mutate(metric = "Shannon"),
+   tukey_hsd(index, Inv_Simpson ~ AA) %>% mutate(metric = "Inv_Simpson"),
+   tukey_hsd(index, Pielou_evenness ~ AA) %>% mutate(metric = "Pielou_evenness"),
+   tukey_hsd(index, Simpson_evenness ~ AA) %>% mutate(metric = "Simpson_evenness"),
+   tukey_hsd(index, Richness ~ AA) %>% mutate(metric = "Richness"),
+   tukey_hsd(index, Chao1 ~ AA) %>% mutate(metric = "Chao1"),
+   tukey_hsd(index, ACE ~ AA) %>% mutate(metric = "ACE")
+ )
 
 
-FileName <- paste(alppath,"/alpha_diversity_anova_table.csv", sep = "")
-write.csv(anova_all,FileName,sep = "")
-FileName <- paste(alppath,"/alpha_diversity_tukey_post_hoc.csv", sep = "")
-write.csv(posthoc_all,FileName,sep = "")
+ FileName <- paste(alppath,"/alpha_diversity_anova_table.csv", sep = "")
+ write.csv(anova_all,FileName,sep = "")
+ FileName <- paste(alppath,"/alpha_diversity_tukey_post_hoc.csv", sep = "")
+ write.csv(posthoc_all,FileName,sep = "")
+
 ```
 
-#### ANOVA Table
+ #### ANOVA Table
 ```{r}
-anova_all
+ anova_all
 ```
 
-#### Post-Hoc Test
+ #### Post-Hoc Test
 ```{r}
-posthoc_all
+ posthoc_all
 ```
-
 ## Beta Diversity
-
 ```{r generating_beta_diversity_measure}
-## Beta Diversity Analysis
-# Generate Abundance Table
+ ## Beta Diversity Analysis
+ # Generate Abundance Table
 
-ps1_rela = phyloseq::transform_sample_counts(PHYLOSEQ_OBJ, function(x) x / sum(x) )
-sample_data(ps1_rela)$SequencingDepth <- sample_sums(PHYLOSEQ_OBJ)
+ ps1_rela = phyloseq::transform_sample_counts(PHYLOSEQ_OBJ, function(x) x / sum(x) )
+ sample_data(ps1_rela)$SequencingDepth <- sample_sums(PHYLOSEQ_OBJ)
 
-if (method == "DCA") {
-  ordi = phyloseq::ordinate(ps1_rela, method=method, distance=dist)
-  points = ordi$rproj[,1:2]
-  colnames(points) = c("x", "y")
-  eig = ordi$evals^2
-}
+ if (method == "DCA") {
+   ordi = phyloseq::ordinate(ps1_rela, method=method, distance=dist)
+   points = ordi$rproj[,1:2]
+   colnames(points) = c("x", "y")
+   eig = ordi$evals^2
+ }
 
-if (method == "CCA") {
-  ordi = phyloseq::ordinate(ps1_rela, method=method, distance=dist)
-  points = ordi$CA$v[,1:2]
-  colnames(points) = c("x", "y") 
-  eig = ordi$CA$eig^2
-}
+ if (method == "CCA") {
+   ordi = phyloseq::ordinate(ps1_rela, method=method, distance=dist)
+   points = ordi$CA$v[,1:2]
+   colnames(points) = c("x", "y")
+   eig = ordi$CA$eig^2
+ }
 
-if (method == "RDA") {
-  ordi = phyloseq::ordinate(ps1_rela, method=method, distance=dist)
-  points = ordi$CA$v[,1:2]
-  colnames(points) = c("x", "y") 
-  eig = ordi$CA$eig
-}
+ if (method == "RDA") {
+   ordi = phyloseq::ordinate(ps1_rela, method=method, distance=dist)
+   points = ordi$CA$v[,1:2]
+   colnames(points) = c("x", "y")
+   eig = ordi$CA$eig
+ }
 
-if (method == "MDS") {
-  ordi = phyloseq::ordinate(ps1_rela, method=method, distance=dist)
-  points = ordi$vectors[,1:2]
-  colnames(points) = c("x", "y")
-  eig = ordi$values[,1]
-}
+ if (method == "MDS") {
+   ordi = phyloseq::ordinate(ps1_rela, method=method, distance=dist)
+   points = ordi$vectors[,1:2]
+   colnames(points) = c("x", "y")
+   eig = ordi$values[,1]
+ }
 
-if (method == "PCoA") {
-  unif = phyloseq::distance(ps1_rela , method=dist, type="samples")
-  pcoa = stats::cmdscale(unif, k=2, eig=T) 
-  points = as.data.frame(pcoa$points) 
-  colnames(points) = c("x", "y")
-  eig = pcoa$eig
-}
+ if (method == "PCoA") {
+   unif = phyloseq::distance(ps1_rela , method=dist, type="samples")
+   pcoa = stats::cmdscale(unif, k=2, eig=T)
+   points = as.data.frame(pcoa$points)
+   colnames(points) = c("x", "y")
+   eig = pcoa$eig
+ }
 
-otu_table = as.data.frame(t(ggClusterNet::vegan_otu(ps1_rela )))
-if (method == "PCA") {
-  otu.pca = stats::prcomp(t(otu_table), scale.default = TRUE)
-  points = otu.pca$x[,1:2]
-  colnames(points) = c("x", "y") 
-  eig=otu.pca$sdev
-  eig=eig*eig
-}
+ otu_table = as.data.frame(t(ggClusterNet::vegan_otu(ps1_rela )))
+ if (method == "PCA") {
+   otu.pca = stats::prcomp(t(otu_table), scale.default = TRUE)
+   points = otu.pca$x[,1:2]
+   colnames(points) = c("x", "y")
+   eig=otu.pca$sdev
+   eig=eig*eig
+ }
 
-if (method == "LDA") {
-  data = t(otu_table)
-  data = as.data.frame(data)
-  data = scale(data, center = TRUE, scale = TRUE)
-  dim(data)
-  data1 = data[,1:10]
-  map = as.data.frame(sample_data(ps1_rela))
-  model = MASS::lda(data, map$Group)
+ if (method == "LDA") {
+   data = t(otu_table)
+   data = as.data.frame(data)
+   data = scale(data, center = TRUE, scale = TRUE)
+   dim(data)
+   data1 = data[,1:10]
+   map = as.data.frame(sample_data(ps1_rela))
+   model = MASS::lda(data, map$Group)
 
-  ord_in = model
-  axes = c(1:2)
-  points = data.frame(predict(ord_in)$x[, axes])
-  colnames(points) = c("x", "y")
-  eig= ord_in$svd^2
-}
+   ord_in = model
+   axes = c(1:2)
+   points = data.frame(predict(ord_in)$x[, axes])
+   colnames(points) = c("x", "y")
+   eig= ord_in$svd^2
+ }
 
-if (method == "NMDS") {
-  ordi = phyloseq::ordinate(ps1_rela, method=method, distance=dist)
-  points = ordi$points[,1:2]
-  colnames(points) = c("x", "y") 
-  stress = ordi$stress
-  stress= paste("stress",":",round(stress,2),sep = "")
-}
+ if (method == "NMDS") {
+   ordi = phyloseq::ordinate(ps1_rela, method=method, distance=dist)
+   points = ordi$points[,1:2]
+   colnames(points) = c("x", "y")
+   stress = ordi$stress
+   stress= paste("stress",":",round(stress,2),sep = "")
+ }
 
-if (method == "t-sne") {
-  data = t(otu_table)
-  data = as.data.frame(data)
-  data = scale(data, center = TRUE, scale = TRUE)
+ if (method == "t-sne") {
+   data = t(otu_table)
+   data = as.data.frame(data)
+   data = scale(data, center = TRUE, scale = TRUE)
 
-  dim(data)
-  map = as.data.frame(sample_data(ps1_rela))
+   dim(data)
+   map = as.data.frame(sample_data(ps1_rela))
 
-  tsne = Rtsne::Rtsne(data,perplexity = 3)
+   tsne = Rtsne::Rtsne(data,perplexity = 3)
 
-  points = as.data.frame(tsne$Y)
-  row.names(points) =  row.names(map)
-  colnames(points) = c("x", "y")
-  stress= NULL
-}
+   points = as.data.frame(tsne$Y)
+   row.names(points) =  row.names(map)
+   colnames(points) = c("x", "y")
+   stress= NULL
+ }
 
-## adonis
-otu_adonis_df <- as.data.frame(t(otu_table(ps1_rela)))
-adonis_dist <- vegdist((otu_adonis_df), method = dist)
-meta_df <- as.data.frame(sample_data(ps1_rela))
-meta_df <- data.frame(meta_df, row.names = rownames(meta_df))
-meta_df$type <- as.factor(meta_df$Sample_Name)
+ ## adonis
+ otu_adonis_df <- as.data.frame(t(otu_table(ps1_rela)))
+ adonis_dist <- vegdist((otu_adonis_df), method = dist)
+ meta_df <- as.data.frame(sample_data(ps1_rela))
+ meta_df <- data.frame(meta_df, row.names = rownames(meta_df))
+ meta_df$type <- as.factor(meta_df$Sample_Name)
 
-adonis_result <- adonis2(adonis_dist ~ type, data = meta_df, by = "margin", permutations = 999)
-
-FileName <- paste(betapath,"/single_PERMANOVA.csv", sep = "")
+ adonis_result <- adonis2(adonis_dist ~ type, data = meta_df, by = "margin", permutations = 99)
+## FileName <- paste(betapath,"/single_PERMANOVA.csv", sep = "")
 write.csv(adonis_result,FileName,sep = ",")
+ ## Plotting the distance plot
 
-## Plotting the distance plot
+ map = as.data.frame(phyloseq::sample_data(ps1_rela))
+ map$Group = as.factor(map$Sample_Name)
+ colbar = length(levels(map$type))
 
-map = as.data.frame(phyloseq::sample_data(ps1_rela))
-map$Group = as.factor(map$Sample_Name)
-colbar = length(levels(map$type))
+ points = cbind(points, map[match(rownames(points), rownames(map)), ])
+ head(points)
+ points$ID = row.names(points)
 
-points = cbind(points, map[match(rownames(points), rownames(map)), ])
-# head(points)
-points$ID = row.names(points)
+ if (method %in% c("DCA", "CCA", "RDA",  "MDS", "PCoA","PCA","LDA","NMDS")) {
+   p2 =ggplot(points, aes(x=x, y=y, fill = Group)) +
+     geom_point(alpha=.7, size=5, pch = 21) +
+     labs(x=paste0(method," 1 (",format(100*eig[1]/sum(eig),digits=4),"%)"),
+          y=paste0(method," 2 (",format(100*eig[2]/sum(eig),digits=4),"%)"),
+         fill = "Group") +
+     stat_ellipse(linetype=2,level=0.95,aes(group=Group, colour=Group)) +
+     theme_bw() +
+     theme(legend.position = 'bottom')  +
+     scale_x_continuous(
+     labels = number_format(accuracy = 0.01)
+   ) +
+   scale_y_continuous(
+     labels = number_format(accuracy = 0.01)
+   )
 
-if (method %in% c("DCA", "CCA", "RDA",  "MDS", "PCoA","PCA","LDA","NMDS")) {
-  p2 =ggplot(points, aes(x=x, y=y, fill = Group)) +
-    geom_point(alpha=.7, size=5, pch = 21) +
-    labs(x=paste0(method," 1 (",format(100*eig[1]/sum(eig),digits=4),"%)"),
-         y=paste0(method," 2 (",format(100*eig[2]/sum(eig),digits=4),"%)"),
-        fill = "Group") +
-    stat_ellipse(linetype=2,level=0.95,aes(group=Group, colour=Group)) +
-    theme_bw() +
-    theme(legend.position = 'bottom')  +
-    scale_x_continuous(
-    labels = number_format(accuracy = 0.01)
-  ) +
-  scale_y_continuous(
-    labels = number_format(accuracy = 0.01)
-  )
+   p3 <- ggplot(points, aes(x = x, y = y, fill = SequencingDepth)) +
+   geom_point(alpha = .7, size = 5, pch = 21) +
+   scale_fill_viridis_c() +
+   labs(
+     x = paste0(method, " 1 (", format(100 * eig[1] / sum(eig), digits = 4), "%)"),
+     y = paste0(method, " 2 (", format(100 * eig[2] / sum(eig), digits = 4), "%)"),
+     fill = "Sequencing Depth") +
+   theme_bw() +
+   theme(legend.position = 'bottom')  +
+   scale_x_continuous(
+     labels = number_format(accuracy = 0.01)
+   ) +
+   scale_y_continuous(
+     labels = number_format(accuracy = 0.01)
+   )
+ }
 
-  p3 <- ggplot(points, aes(x = x, y = y, fill = SequencingDepth)) +
-  geom_point(alpha = .7, size = 5, pch = 21) +
-  scale_fill_viridis_c() +
-  labs(
-    x = paste0(method, " 1 (", format(100 * eig[1] / sum(eig), digits = 4), "%)"),
-    y = paste0(method, " 2 (", format(100 * eig[2] / sum(eig), digits = 4), "%)"),
-    fill = "Sequencing Depth") +
-  theme_bw() +
-  theme(legend.position = 'bottom')  +
-  scale_x_continuous(
-    labels = number_format(accuracy = 0.01)
-  ) +
-  scale_y_continuous(
-    labels = number_format(accuracy = 0.01)
-  )
-}
-
-p4 <- ggarrange(p2, p3, 
-               ncol = 2,
-               nrow = 1)
+ p4 <- ggarrange(p2, p3,
+                ncol = 2,
+                nrow = 1)
 
 
-FileName <- paste(betapath,"/", method, "_Type.svg", sep = "")
-ggsave(FileName, p2, width = 10, height = 10, limitsize = FALSE)
-FileName <- paste(betapath,"/", method, "_Seq_Depth.svg", sep = "")
-ggsave(FileName, p3, width = 10, height = 10, limitsize = FALSE)
-FileName <- paste(betapath,"/", method, "_Arranged.svg", sep = "")
-ggsave(FileName, p4, width = 20, height = 10, limitsize = FALSE)
+ FileName <- paste(betapath,"/", method, "_Type.svg", sep = "")
+ ggsave(FileName, p2, width = 10, height = 10, limitsize = FALSE)
+ FileName <- paste(betapath,"/", method, "_Seq_Depth.svg", sep = "")
+ ggsave(FileName, p3, width = 10, height = 10, limitsize = FALSE)
+ FileName <- paste(betapath,"/", method, "_Arranged.svg", sep = "")
+ ggsave(FileName, p4, width = 20, height = 10, limitsize = FALSE)
 ```
 
 ```{r}
-p4
+ p4
 ```
 
-## Taxonomic Analysis
+ ## Taxonomic Analysis
 
 ```{r}
-#TAXA DOT PLOT - PHYLA
+ #TAXA DOT PLOT - PHYLA
 
-# Collapse to chosen level
-PHYLOSEQ_OBJ_TAXA <- tax_glom(PHYLOSEQ_OBJ, taxrank = tax_level)
+ # Collapse to chosen level
+ PHYLOSEQ_OBJ_TAXA <- tax_glom(PHYLOSEQ_OBJ, taxrank = tax_level)
 
-# Relative abundance
-PHYLOSEQ_OBJ_RELATIVE_ABUND <- transform_sample_counts(PHYLOSEQ_OBJ_TAXA, function(x) x / sum(x))
+ # Relative abundance
+ PHYLOSEQ_OBJ_RELATIVE_ABUND <- transform_sample_counts(PHYLOSEQ_OBJ_TAXA, function(x) x / sum(x))
 
-# Melt
-PHYLOSEQ_OBJ_PLOT <- psmelt(PHYLOSEQ_OBJ_RELATIVE_ABUND)
+  Melt
+ PHYLOSEQ_OBJ_PLOT <- psmelt(PHYLOSEQ_OBJ_RELATIVE_ABUND)
 
-# ---- NEW PART: Identify top 20 taxa ----
+ # ---- NEW PART: Identify top 20 taxa ----
 
-top_taxa <- PHYLOSEQ_OBJ_PLOT %>%
-  as_tibble() %>%  # ensure a tibble, not an S4/IRanges object
-  group_by(.data[[tax_level]]) %>%
-  summarise(mean_abundance = mean(Abundance, na.rm = TRUE), .groups = "drop") %>%
-  arrange(desc(mean_abundance)) %>%
-  dplyr::slice(1:30) %>%
-  dplyr::pull(.data[[tax_level]]) %>%
-  unique()
-
-
-# ---- Recode everything else as "Other" ----
-PHYLOSEQ_OBJ_PLOT <- PHYLOSEQ_OBJ_PLOT %>%
-  mutate(!!sym(tax_level) := if_else(!!sym(tax_level) %in% top_taxa,
-                                     !!sym(tax_level),
-                                     "Other"))
+ top_taxa <- PHYLOSEQ_OBJ_PLOT %>%
+   as_tibble() %>%  # ensure a tibble, not an S4/IRanges object
+   group_by(.data[[tax_level]]) %>%
+   summarise(mean_abundance = mean(Abundance, na.rm = TRUE), .groups = "drop") %>%
+   arrange(desc(mean_abundance)) %>%
+   dplyr::slice(1:30) %>%
+   dplyr::pull(.data[[tax_level]]) %>%
+   unique()
 
 
-PHYLOSEQ_OBJ_PLOT <- PHYLOSEQ_OBJ_PLOT %>%
-  group_by(Sample, Sample_Name, !!sym(tax_level)) %>% 
-  summarise(Abundance = sum(Abundance), .groups = "drop")
+ # ---- Recode everything else as "Other" ----
+ PHYLOSEQ_OBJ_PLOT <- PHYLOSEQ_OBJ_PLOT %>%
+   mutate(!!sym(tax_level) := if_else(!!sym(tax_level) %in% top_taxa,
+                                      !!sym(tax_level),
+                                      "Other"))
 
 
-taxa_order <- c(top_taxa, "Other")
-PHYLOSEQ_OBJ_PLOT[[tax_level]] <- factor(PHYLOSEQ_OBJ_PLOT[[tax_level]], levels = taxa_order)
-
-# Filter out abundances below 0.1
-PHYLOSEQ_OBJ_PLOT <- PHYLOSEQ_OBJ_PLOT %>%
-  filter(Abundance >= 0.01) # Do not show the rare samples
-
-PHYLOSEQ_OBJ_PLOT$label <- paste0(PHYLOSEQ_OBJ_PLOT$Sample.name, "_", PHYLOSEQ_OBJ_PLOT$type_detail)
-
-## Wrap the Facet Labels
-facet_labels_wrapped <- setNames(
-  stringr::str_wrap(levels(PHYLOSEQ_OBJ_PLOT$type), width = 10),
-  levels(PHYLOSEQ_OBJ_PLOT$type)
-)
-
-p4 <- ggplot(PHYLOSEQ_OBJ_PLOT, 
-       aes(x = Sample, 
-           y = !!sym(tax_level), 
-           size = Abundance, 
-           color = !!sym(tax_level))) +
-  geom_point(alpha = 0.7) +
-  theme_bw() +
-  facet_wrap(~ Sample_Name, scales = 'free_x', nrow = 1) +
-  theme(axis.text.x = element_text(angle = 90, vjust = 0.5)) +
-  ylab(tax_level) +
-  xlab("") +
-  scale_size_continuous(range = c(1, 20)) + 
-  guides(color = guide_legend(nrow = 20, byrow = FALSE, override.aes = list(size = 6))) +
-  theme(strip.text = element_text(size = 12, face = "bold")) +
-  theme(axis.title.x=element_text(size=12), axis.title.y=element_text(size=12)) +
-  theme(axis.text.x=element_text(size=12), axis.text.y=element_text(size=12)) +
-  theme(legend.title=element_text(size=12, face = "bold"), legend.text=element_text(size=12)) +
-  theme(legend.position="right")
+ PHYLOSEQ_OBJ_PLOT <- PHYLOSEQ_OBJ_PLOT %>%
+   group_by(Sample, Sample_Name, !!sym(tax_level)) %>%
+   summarise(Abundance = sum(Abundance), .groups = "drop")
 
 
-FileName <- paste(alppath,"Dot_Taxonomy.svg", sep = "")
-ggsave(FileName, p4, width = 30, height = 10, limitsize = FALSE)
+ taxa_order <- c(top_taxa, "Other")
+ PHYLOSEQ_OBJ_PLOT[[tax_level]] <- factor(PHYLOSEQ_OBJ_PLOT[[tax_level]], levels = taxa_order)
+
+ # Filter out abundances below 0.1
+ PHYLOSEQ_OBJ_PLOT <- PHYLOSEQ_OBJ_PLOT %>%
+   filter(Abundance >= 0.01) # Do not show the rare samples
+
+ PHYLOSEQ_OBJ_PLOT$label <- paste0(PHYLOSEQ_OBJ_PLOT$Sample.name, "_",  PHYLOSEQ_OBJ_PLOT$type_detail)
+
+ ## Wrap the Facet Labels
+ facet_labels_wrapped <- setNames(
+   stringr::str_wrap(levels(PHYLOSEQ_OBJ_PLOT$type), width = 10),
+   levels(PHYLOSEQ_OBJ_PLOT$type)
+ )
+
+ p4 <- ggplot(PHYLOSEQ_OBJ_PLOT,
+        aes(x = Sample,
+            y = !!sym(tax_level),
+            size = Abundance,
+            color = !!sym(tax_level))) +
+   geom_point(alpha = 0.7) +
+   theme_bw() +
+   facet_wrap(~ Sample_Name, scales = 'free_x', nrow = 1) +
+   theme(axis.text.x = element_text(angle = 90, vjust = 0.5)) +
+   ylab(tax_level) +
+   xlab("") +
+   scale_size_continuous(range = c(1, 20)) +
+   guides(color = guide_legend(nrow = 20, byrow = FALSE, override.aes = list(size = 6))) +
+   theme(strip.text = element_text(size = 12, face = "bold")) +
+   theme(axis.title.x=element_text(size=12), axis.title.y=element_text(size=12)) +
+   theme(axis.text.x=element_text(size=12), axis.text.y=element_text(size=12)) +
+   theme(legend.title=element_text(size=12, face = "bold"), legend.text=element_text(size=12)) 
+  +  theme(legend.position="right")
+
+
+ FileName <- paste(alppath,"Dot_Taxonomy.svg", sep = "")
+ ggsave(FileName, p4, width = 30, height = 10, limitsize = FALSE)
 ```
 
 ```{r plotting_taxonomy, fig.width=20, fig.height=20}
-p4
+ p4
 ```
+
+
 
