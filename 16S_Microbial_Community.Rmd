@@ -12,9 +12,9 @@ output:
     toc_depth: 3
 ---
 
-## User Variables
+```{r defining_user_variables, include = FALSE}
 
-```{r defining_user_variables}
+analysis_name <- "Hurleston Reservoir, United Utilities"
 
 ## Input Files from Qiime2 Pipeline
 metadata_path <- "metadata.csv"
@@ -33,7 +33,7 @@ min_ASVs = 5
 group = "Sample_Name"
 
 ## Beta Diversity Variables
-dist = "bray"
+dist = "unifrac"
 method = "NMDS"
 pvalue_cutoff = 0.05
 micromet = "adonis"
@@ -44,6 +44,10 @@ tax_level <- "Class"
 
 ANCOMBC_list <- c("RGF1", "RGF2", "RGF3")
 ```
+
+## Analysis of `r analysis_name`
+
+## User Variables
 
 ```{r generate_output_directories, include = FALSE}
 
@@ -147,6 +151,80 @@ library(ggrepel)
 library(DESeq2)
 library(scales)
 library(plotly)
+library(knitr)
+library(kableExtra)
+```
+
+```{r, echo=FALSE}
+library(knitr)
+library(kableExtra)
+
+make_table <- function(params, values) {
+
+  stopifnot(length(params) == length(values))
+
+  data.frame(
+    Parameter = params,
+    Value = values,
+    stringsAsFactors = FALSE
+  ) |>
+    kable(
+      format = "html",
+      escape = FALSE
+    ) |>
+    kable_styling(
+      full_width = FALSE,
+      bootstrap_options = "bordered",
+      position = "left",
+      html_font = "sans-serif"
+    ) |>
+    row_spec(
+      0,
+      bold = TRUE,
+      align = "left",
+      background = "#2F4052",
+      color = "white"
+    ) |>
+    row_spec(
+      1:nrow(data.frame(params)),
+      background = "lightgray"
+    ) |>
+    column_spec(1, width = "75%") |>
+    column_spec(2, width = "50%", extra_css = "word-break: break-all;")
+}
+
+make_table(
+  params = c(
+    "Metadata Path",
+    "ASV Feature Table Path",
+    "ASV DNA Sequences Path",
+    "Taxonomy Table Path",
+    "Phylogeny Path",
+    "Output Path",
+    "Minimum Sum of ASVs",
+    "Comparative Group Variable",
+    "Distance Metric",
+    "Plotting Method",
+    "P-Value Cutoff",
+    "Pairwise Analysis",
+    "Taxonomic Level"
+  ),
+  values = c(
+    metadata_path,
+    otu_table_path,
+    otu_fasta_path,
+    taxonomy_table_path,
+    tree_path,
+    output_path,
+    min_ASVs,
+    group,
+    dist,
+    method,
+    pvalue_cutoff,
+    pair,
+    tax_level
+  )
+)
 ```
 
 ## Generating a Phyloseq Object
@@ -212,85 +290,90 @@ ROOTED_TREE <- read_tree(tree_path)
 PHYLOSEQ_OBJ <- phyloseq(FEATURE_TABLE_CLEAN, TAXONOMY_TABLE, METADATA_TABLE, ROOTED_TREE)
 
 ```
+
+##### Summary of Metadata
+```{r summary_metadata}
+head(sample_data(PHYLOSEQ_OBJ))
+```
+
+
 #### Alpha Rarefraction Curve
 
-```{r generating_alpha_rarefraction}
-# # Calculating Rarefraction Curve
-# 
-# set.seed(2006576) # reproducibility
-# 
-# # Use original clean phyloseq object
-# dat <- PHYLOSEQ_OBJ
-# 
-# # Define depths
-# lib_sizes <- sample_sums(dat)
-# min_lib   <- min(lib_sizes)
-# max_lib   <- max(lib_sizes)
-# 
-# # Start with your candidate depths
-# depths <- seq(min_lib, max_lib, by = 100)
-# sample_var <- group
-# 
-# # Initialize list
-# richness_list <- list()
-# 
-# for (d in depths) {
-#   set.seed(2006576)
-#   rare_dat <- rarefy_even_depth(dat, sample.size = d, rngseed = 2006576, verbose = FALSE, replace = FALSE)
-# 
-#   richness <- estimate_richness(rare_dat, measures = "Observed")
-#   richness$SampleID <- rownames(richness)
-#   richness$Depth <- d
-#   richness_list[[as.character(d)]] <- richness
-# }
-# 
-# # Combine results
-# rare_df <- bind_rows(richness_list)
-# 
-# # Add metadata
-# metadata <- data.frame(sample_data(dat))
-# metadata$SampleID <- rownames(metadata)
-# rare_df <- left_join(rare_df, metadata, by = "SampleID")
-# 
-# # Summarize mean & SE per group
-# summary_df <- rare_df %>%
-#   group_by(Depth, !!sym(sample_var)) %>%
-#   mutate(
-#     Richness_mean = mean(Observed, na.rm = TRUE),
-#     Richness_se   = sd(Observed, na.rm = TRUE) / sqrt(n())
-#   ) %>%
-#   ungroup()
+```{r generating_alpha_rarefraction, include = FALSE}
+# Calculating Rarefraction Curve
 
+set.seed(2006576) # reproducibility
+
+# Use original clean phyloseq object
+dat <- PHYLOSEQ_OBJ
+
+# Define depths
+lib_sizes <- sample_sums(dat)
+min_lib   <- min(lib_sizes)
+max_lib   <- max(lib_sizes)
+
+# Start with your candidate depths
+depths <- seq(min_lib, max_lib, by = 100)
+sample_var <- group
+
+# Initialize list
+richness_list <- list()
+
+for (d in depths) {
+  set.seed(2006576)
+  rare_dat <- rarefy_even_depth(dat, sample.size = d, rngseed = 2006576, verbose = FALSE, replace = FALSE)
+
+  richness <- estimate_richness(rare_dat, measures = "Observed")
+  richness$SampleID <- rownames(richness)
+  richness$Depth <- d
+  richness_list[[as.character(d)]] <- richness
+}
+
+# Combine results
+rare_df <- bind_rows(richness_list)
+
+# Add metadata
+metadata <- data.frame(sample_data(dat))
+metadata$SampleID <- rownames(metadata)
+rare_df <- left_join(rare_df, metadata, by = "SampleID")
+
+# Summarize mean & SE per group
+summary_df <- rare_df %>%
+  group_by(Depth, !!sym(sample_var)) %>%
+  mutate(
+    Richness_mean = mean(Observed, na.rm = TRUE),
+    Richness_se   = sd(Observed, na.rm = TRUE) / sqrt(n())
+  ) %>%
+  ungroup()
 ```
 
-```{r plotting_alpha_rarefraction}
+```{r plotting_alpha_rarefraction, include = FALSE}
 
-# ## Plotting the Rarefraction Curve
-# ORG_PHYLO_RARE <- ggplot(summary_df, aes(x = Depth, y = Richness_mean, color = SampleID)) +
-#   geom_line(linewidth = 1) +
-#   geom_ribbon(aes(ymin = Richness_mean - Richness_se,
-#                   ymax = Richness_mean + Richness_se,
-#                   fill = SampleID), alpha = 0.2, color = NA) +
-#   scale_color_discrete(labels = summary_df$SampleID) +
-#   scale_fill_discrete(labels = summary_df$SampleID) +
-#   scale_x_continuous(breaks = seq(0, 100000, by = 5000))+
-#   labs(title = "",
-#        x = "Sequencing Depth (n)",
-#        y = "Mean Observed ASVs (n)",
-#        color = "Species",
-#        fill = "Species") +
-#   theme_classic()+
-#   theme(axis.title.x=element_text(size=14), axis.title.y=element_text(size=14, face = "bold"))+
-#   theme(axis.text.x=element_text(size=13, angle = 35, hjust = 1, vjust = 1), axis.text.y=element_text(size=13))+
-#   theme(legend.title=element_text(size=14, face = "bold"), legend.text=element_text(size=13))+
-#   theme(legend.position="right")
-# 
-# FileName <- paste(alppath,"Refraction_Curve", ".svg", sep = "")
-# ggsave(FileName, ORG_PHYLO_RARE, width = 10, height = 10, limitsize = FALSE)
+## Plotting the Rarefraction Curve
+ORG_PHYLO_RARE <- ggplot(summary_df, aes(x = Depth, y = Richness_mean, color = SampleID)) +
+  geom_line(linewidth = 1) +
+  scale_color_discrete(labels = summary_df$SampleID) +
+  scale_fill_discrete(labels = summary_df$SampleID) +
+  scale_x_continuous(breaks = seq(0, 100000, by = 5000))+
+  labs(title = "",
+       x = "Sequencing Depth (n)",
+       y = "Mean Observed ASVs (n)",
+       color = "Group",
+       fill = "Group") +
+  theme_classic()+
+  theme(axis.title.x=element_text(size=14), axis.title.y=element_text(size=14, face = "bold"))+
+  theme(axis.text.x=element_text(size=13, angle = 35, hjust = 1, vjust = 1), axis.text.y=element_text(size=13))+
+  theme(legend.title=element_text(size=14, face = "bold"), legend.text=element_text(size=13))+
+  theme(legend.position="right")
+
+FileName <- paste(alppath,"Refraction_Curve", ".svg", sep = "")
+ggsave(FileName, ORG_PHYLO_RARE, width = 10, height = 10, limitsize = FALSE)
 ```
+
+An alpha refraction curve is generated on the unfiltered dataset. The minimum library size was `r min_lib` and the maximum library size was `r max_lib`.
 
 ```{r}
-# ORG_PHYLO_RARE
+ggplotly(ORG_PHYLO_RARE)
 ```
 
 ## Removing Contamination
@@ -327,17 +410,23 @@ PHYLOSEQ_OBJ_CLEAN <- prune_taxa(
 )
 ```
 
-```{r decontam_output}
+```{r decontam_output, include = FALSE}
 # Prior to decontamination
-ntaxa(PHYLOSEQ_OBJ); 
+org_ntaxa <- ntaxa(PHYLOSEQ_OBJ); 
 
 # Following decontamination
-ntaxa(PHYLOSEQ_OBJ_CLEAN)
+decon_ntaxa <- ntaxa(PHYLOSEQ_OBJ_CLEAN)
+
+removed_ntaxa <- org_ntaxa - decon_ntaxa
 ```
 
-## Basic Information Plots
+The decontam package was used in a combination method taking into account the sequencing depth and the community of the controls. The number of unique taxa/ASVs before decontamination is `r org_ntaxa`. A sum of `r removed_ntaxa` were removed, leaving `r decon_ntaxa` unique taxa/ASVs. 
 
-```{r}
+## Basic Information Tables
+
+From this point, controls are no longer needed for analysis and have been removed. The following tables include basic information (such as abundance/raw count tables are each taxonomic level). These tables can be found here: `r otupath`
+
+```{r basic_info_table, include=FALSE}
 ### Overide Original Object to remove controls. 
 PHYLOSEQ_OBJ <- PHYLOSEQ_OBJ_CLEAN
 PHYLOSEQ_OBJ <- subset_samples(PHYLOSEQ_OBJ_CLEAN, Control != "Y")
@@ -391,9 +480,29 @@ for (i in 2: length(phyloseq::rank_names(PHYLOSEQ_OBJ))) {
 
 ```
 
+#### Output OTU Table
+```{r summarise_basic_tables0, echo=FALSE}
+head(otu)
+```
+
+#### Output Taxa Table
+```{r summarise_basic_tables1, echo=FALSE}
+head(tax)
+```
+
+#### Output Relative Abundance Table
+```{r summarise_basic_tables2, echo=FALSE}
+head(otutax)
+```
+
+#### Output Relative Abundance Taxa Table
+```{r summarise_basic_tables3, echo=FALSE}
+head(otu)
+```
+
 ## Alpha Diversity
 
-```{r}
+```{r generate_alpha_diversity}
 ## Perform Diversity Measures
 
 set.seed(2006576)
@@ -454,31 +563,49 @@ write.csv(index,FileName,sep = "")
 
  result1 = EasyStat::FacetMuiPlotresultBox(data = data,num = c(3:9),
                                  result = result,
-                                 sig_show ="abc",ncol = 3 )
+                                 sig_show ="line",ncol = 3 )
+```
 
- p1_1 = result1[[2]] %>% ggplot(aes(x=group , y=dd )) +
+#### Alpha Diversity Plot (All Distances)
+```{r stat_plot, fig.width=10, fig.height=10}
+
+df <- result1[[2]] %>%
+  mutate(
+    dd = suppressWarnings(as.numeric(dd))  # ensure numeric
+  )
+
+
+p1_1 = ggplot(df, aes(x=group , y=dd )) +
    geom_boxplot(alpha=1, aes(fill=group)) +
    geom_point(aes(color = group), size=3, alpha=0.5)+
    labs(x="", y="")+
    facet_wrap(.~name,scales="free_y",ncol  = 3) +
-   ggplot2::scale_x_discrete(limits = axis_order) +
+   scale_x_discrete(limits = axis_order) +
+   scale_y_continuous(expand = expansion(mult = c(0.1, 0.1))) +
    guides(color=guide_legend(title = NULL),
           shape=guide_legend(title = NULL),
           fill = guide_legend(title = NULL)
           ) +
-   theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
+   theme_bw() +
+   theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1)) +
+   ggpubr::geom_pwc(
+     method = "wilcox.test",
+     label = 'p.signif',
+     hide.ns = TRUE,
+     show.legend = TRUE)
 
  FileName <- paste(alppath,"Alpha_box", ".svg", sep = "")
  ggsave(FileName, p1_1, width = 15, height = 15, limitsize = FALSE)
+
 ```
 
- #### Alpha Diversity Measures
+#### Alpha Diversity Measures
 
 ```{r plotting_diversity_to_RMD, fig.width=10, fig.height=10}
  p1_1
 ```
 
- #### Statistical Analysis
+#### Statistical Analysis
 ```{r ANOVA_on_Alpha}
  ## Perform and Extract Comparison Information
 
@@ -541,239 +668,73 @@ write.csv(index,FileName,sep = "")
 
 ```
 
- #### ANOVA Table
-```{r}
+#### ANOVA Table
+```{r, echo=FALSE}
  anova_all
 ```
 
- #### Post-Hoc Test
-```{r}
+#### Post-Hoc Test
+```{r ,echo=FALSE}
  posthoc_all
 ```
+
 ## Beta Diversity
 
-```{r}
+A beta diversity ordination plot is generated using the `r method` method and the `r dist` distance. 
 
-ord_pcoa_uf <- ordinate(PHYLOSEQ_OBJ, method = "NMDS", distance = "unifrac", weighted = TRUE)
+```{r ordination_plot, include = FALSE}
 
-stress_val <- ord_pcoa_uf$stres
+ord_df <- ordinate(PHYLOSEQ_OBJ, 
+                  method = method, 
+                  distance = dist, 
+                  weighted = TRUE)
 
-ord_plot <- plot_ordination(PHYLOSEQ_OBJ, ord_pcoa_uf, color = "Groups") +
-  stat_ellipse(type = "t", linetype = 2, level = 0.95) +
-  ggtitle(sprintf("NMDS (Weighted UniFrac) — Stress = %.3f", stress_val))
-geom_point(size = 3) + theme_bw()
+stress_val <- ord_df$stress
+
+ord_plot <- plot_ordination(PHYLOSEQ_OBJ, 
+                            ord_df,
+                            color = "Sample_Name",
+                            axes = c(1,2)) +
+  stat_ellipse(type = "t", 
+               linetype = 2, 
+               level = 0.95) +
+  ggtitle(sprintf("Method: %s & Distance: %s", method, dist)) +
+  geom_point(size = 3) + 
+  theme_bw()
+
+FileName <- paste(betapath,"/", method, "_ordination.svg", sep = "")
+ggsave(FileName, ord_plot, width = 20, height = 10, limitsize = FALSE)
+```
+
+The following plot is coloured by **`r group`**. The stress of the `r method` was: `r stress_val`. 
+
+```{r display_ordination_plot, echo=FALSE, fig.align='center'}
 ggplotly(ord_plot)
 ```
 
-```{r}
-
-ord_nmds <- ordinate(PHYLOSEQ_OBJ, method = "NMDS", distance = "bray", trymax = 200)
-ord_plot <- plot_ordination(PHYLOSEQ_OBJ, ord_nmds, color = "Sample_Name") +
-  stat_ellipse(type = "t", linetype = 2, level = 0.68) + # optional group ellipse
-  geom_point(size = 3) + theme_bw() + labs(title = "NMDS (Bray–Curtis)")
-ggplotly(ord_plot)
-```
-
+The following plot is coloured by **Sequencing Depth** to assure no confounding grouping. 
 
 ```{r generating_beta_diversity_measure}
-#  ## Beta Diversity Analysis
-#  # Generate Abundance Table
-# 
-#  ps1_rela = phyloseq::transform_sample_counts(PHYLOSEQ_OBJ, function(x) x / sum(x) )
-#  sample_data(ps1_rela)$SequencingDepth <- sample_sums(PHYLOSEQ_OBJ)
-# 
-#  if (method == "DCA") {
-#    ordi = phyloseq::ordinate(ps1_rela, method=method, distance=dist)
-#    points = ordi$rproj[,1:2]
-#    colnames(points) = c("x", "y")
-#    eig = ordi$evals^2
-#  }
-# 
-#  if (method == "CCA") {
-#    ordi = phyloseq::ordinate(ps1_rela, method=method, distance=dist)
-#    points = ordi$CA$v[,1:2]
-#    colnames(points) = c("x", "y")
-#    eig = ordi$CA$eig^2
-#  }
-# 
-#  if (method == "RDA") {
-#    ordi = phyloseq::ordinate(ps1_rela, method=method, distance=dist)
-#    points = ordi$CA$v[,1:2]
-#    colnames(points) = c("x", "y")
-#    eig = ordi$CA$eig
-#  }
-# 
-#  if (method == "MDS") {
-#    ordi = phyloseq::ordinate(ps1_rela, method=method, distance=dist)
-#    points = ordi$vectors[,1:2]
-#    colnames(points) = c("x", "y")
-#    eig = ordi$values[,1]
-#  }
-# 
-#  if (method == "PCoA") {
-#    unif = phyloseq::distance(ps1_rela , method=dist, type="samples")
-#    pcoa = stats::cmdscale(unif, k=3, eig=T)
-#    points = as.data.frame(pcoa$points)
-#    colnames(points) = c("x", "y","Z")
-#    eig = pcoa$eig
-#  }
-# 
-#  otu_table = as.data.frame(t(ggClusterNet::vegan_otu(ps1_rela )))
-#  if (method == "PCA") {
-#    otu.pca = stats::prcomp(t(otu_table), scale.default = TRUE)
-#    points = otu.pca$x[,1:2]
-#    colnames(points) = c("x", "y")
-#    eig=otu.pca$sdev
-#    eig=eig*eig
-#  }
-# 
-#  if (method == "LDA") {
-#    data = t(otu_table)
-#    data = as.data.frame(data)
-#    data = scale(data, center = TRUE, scale = TRUE)
-#    dim(data)
-#    data1 = data[,1:10]
-#    map = as.data.frame(sample_data(ps1_rela))
-#    model = MASS::lda(data, map$Group)
-# 
-#    ord_in = model
-#    axes = c(1:2)
-#    points = data.frame(predict(ord_in)$x[, axes])
-#    colnames(points) = c("x", "y")
-#    eig= ord_in$svd^2
-#  }
-# 
-#  if (method == "NMDS") {
-#    ordi = phyloseq::ordinate(ps1_rela, method=method, distance=dist)
-#    points = ordi$points[,1:3]
-#    colnames(points) = c("x", "y", "Z")
-#    stress = ordi$stress
-#    stress= paste("stress",":",round(stress,2),sep = "")
-#  }
-# 
-#  if (method == "t-sne") {
-#    data = t(otu_table)
-#    data = as.data.frame(data)
-#    data = scale(data, center = TRUE, scale = TRUE)
-# 
-#    dim(data)
-#    map = as.data.frame(sample_data(ps1_rela))
-# 
-#    tsne = Rtsne::Rtsne(data,perplexity = 3)
-# 
-#    points = as.data.frame(tsne$Y)
-#    row.names(points) =  row.names(map)
-#    colnames(points) = c("x", "y")
-#    stress= NULL
-#  }
-# 
-#  ## adonis
-#  otu_adonis_df <- as.data.frame(t(otu_table(ps1_rela)))
-#  adonis_dist <- vegdist((otu_adonis_df), method = dist)
-#  meta_df <- as.data.frame(sample_data(ps1_rela))
-#  meta_df <- data.frame(meta_df, row.names = rownames(meta_df))
-#  meta_df$type <- as.factor(meta_df$Sample_Name)
-# 
-#  adonis_result <- adonis2(adonis_dist ~ type, data = meta_df, by = "margin", permutations = 99)
-# ## FileName <- paste(betapath,"/single_PERMANOVA.csv", sep = "")
-# write.csv(adonis_result,FileName,sep = ",")
-#  ## Plotting the distance plot
-# 
-#  map = as.data.frame(phyloseq::sample_data(ps1_rela))
-#  map$Group = as.factor(map$Sample_Name)
-#  colbar = length(levels(map$type))
-# 
-#  points = cbind(points, map[match(rownames(points), rownames(map)), ])
-#  head(points)
-#  points$ID = row.names(points)
-# 
-#  if (method %in% c("DCA", "CCA", "RDA",  "MDS", "PCoA","PCA","LDA","NMDS")) {
-#    p2 =ggplot(points, aes(x=x, y=y, fill = Group)) +
-#      geom_point(alpha=.7, size=5, pch = 21) +
-#      labs(x=paste0(method," 1 (",format(100*eig[1]/sum(eig),digits=4),"%)"),
-#           y=paste0(method," 2 (",format(100*eig[2]/sum(eig),digits=4),"%)"),
-#          fill = "Group") +
-#      stat_ellipse(linetype=2,level=0.95,aes(group=Group, colour=Group)) +
-#      theme_bw() +
-#      theme(legend.position = 'bottom')  +
-#      scale_x_continuous(
-#      labels = number_format(accuracy = 0.01)
-#    ) +
-#    scale_y_continuous(
-#      labels = number_format(accuracy = 0.01)
-#    )
-# 
-#    p3 <- ggplot(points, aes(x = x, y = y, fill = SequencingDepth)) +
-#    geom_point(alpha = .7, size = 5, pch = 21) +
-#    scale_fill_viridis_c() +
-#    labs(
-#      x = paste0(method, " 1 (", format(100 * eig[1] / sum(eig), digits = 4), "%)"),
-#      y = paste0(method, " 2 (", format(100 * eig[2] / sum(eig), digits = 4), "%)"),
-#      fill = "Sequencing Depth") +
-#    theme_bw() +
-#    theme(legend.position = 'bottom')  +
-#    scale_x_continuous(
-#      labels = number_format(accuracy = 0.01)
-#    ) +
-#    scale_y_continuous(
-#      labels = number_format(accuracy = 0.01)
-#    )
-#  }
-# 
-#  p4 <- ggarrange(p2, p3,
-#                 ncol = 2,
-#                 nrow = 1)
-# 
-# 
-#  FileName <- paste(betapath,"/", method, "_Type.svg", sep = "")
-#  ggsave(FileName, p2, width = 10, height = 10, limitsize = FALSE)
-#  FileName <- paste(betapath,"/", method, "_Seq_Depth.svg", sep = "")
-#  ggsave(FileName, p3, width = 10, height = 10, limitsize = FALSE)
-#  FileName <- paste(betapath,"/", method, "_Arranged.svg", sep = "")
-#  ggsave(FileName, p4, width = 20, height = 10, limitsize = FALSE)
+ord_plot <- plot_ordination(PHYLOSEQ_OBJ, 
+                            ord_df,
+                            color = "SequencingDepth") +
+  ggtitle(sprintf("Method: %s & Distance: %s", method, dist)) +
+  geom_point(size = 3) + 
+  theme_bw()
+
+FileName <- paste(betapath,"/", method, "SeqDepth_ordination.svg", sep = "")
+ggsave(FileName, ord_plot, width = 20, height = 10, limitsize = FALSE)
 ```
 
-```{r}
-# ggplotly(p4, width = 1800, height = 1000)
+```{r plot_ordination, fig.align='center'}
+ggplotly(ord_plot)
 ```
 
 #### Interactive 3D Plot
 
-```{r}
-# library(plotly)
-# 
-# 
-# x_lab <- paste0(method, " 1 (", format(100 * eig[1] / sum(eig), digits = 4), "%)")
-# y_lab <- paste0(method, " 2 (", format(100 * eig[2] / sum(eig), digits = 4), "%)")
-# z_lab <- paste0(method, " 3 (", format(100 * eig[3] / sum(eig), digits = 4), "%)")
-# 
-# 
-# plot_ly(
-#   data = points,
-#   x = ~x,
-#   y = ~y,
-#   z = ~Z,
-#   color = ~Sample_Name,   # or whatever metadata column you want
-#   type = "scatter3d",
-#   mode = "markers",
-#   width = 1800,
-#   height = 1000
-# ) %>%
-#   layout(
-#     scene = list(
-#       xaxis = list(title = x_lab),
-#       yaxis = list(title = y_lab),
-#       zaxis = list(title = z_lab)
-#     )
-#   )
-
-
-```
-
-
 ## Taxonomic Analysis
 
-```{r}
+```{r taxanomic_dot, include=FALSE}
  # Collapse to chosen level
  PHYLOSEQ_OBJ_TAXA <- tax_glom(PHYLOSEQ_OBJ, taxrank = tax_level)
 
@@ -839,27 +800,15 @@ ggplotly(ord_plot)
    theme(axis.title.x=element_text(size=12), axis.title.y=element_text(size=12)) +
    theme(axis.text.x=element_text(size=12), axis.text.y=element_text(size=12)) +
    theme(legend.title=element_text(size=12, face = "bold"), legend.text=element_text(size=12)) +
-   theme(legend.position="right") +
-   theme(
-  strip.text.x = element_text(
-    size = 10,
-    face = "bold",
-    margin = margin(t = 8, r = 8, b = 8, l = 8)
-  ),
-  strip.background = element_rect(fill = "grey80"),
-  strip.placement = "outside",
-  strip.height = unit(10, "cm")   # ← Increase this to make more space
-)
-
-
+   theme(legend.position="right")
 
 
  FileName <- paste(alppath,"Dot_Taxonomy.svg", sep = "")
  ggsave(FileName, p4, width = 30, height = 10, limitsize = FALSE)
 ```
 
-```{r plotting_taxonomy, fig.width=10, fig.height=20}
-ggplotly(p4, width = 1800, height = 1000)
+```{r plotting_taxonomy, fig.width=10, fig.height=20, echo=FALSE}
+ggplotly(p4, width = 1500, height = 1000)
 ```
 
 ## Differential Abundance
