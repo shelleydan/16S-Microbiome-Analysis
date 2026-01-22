@@ -31,6 +31,7 @@ min_ASVs = 5
 
 ## Comparison Variables
 group = "Sample_Name"
+control = "Control"
 
 ## Beta Diversity Variables
 dist = "unifrac"
@@ -42,10 +43,14 @@ pair = TRUE
 ## Taxonomic Variables
 tax_level <- "Class" 
 
-ANCOMBC_list <- c("RGF1", "RGF2", "RGF3")
+primary_distance_measure <- "Shannon"
+
 ```
 
 ## Analysis of `r analysis_name`
+
+
+**Note: All figures produced as part of this RMarkdown are saved in the specified output directory specified below.**
 
 ## User Variables
 
@@ -197,7 +202,6 @@ make_table(
   params = c(
     "Metadata Path",
     "ASV Feature Table Path",
-    "ASV DNA Sequences Path",
     "Taxonomy Table Path",
     "Phylogeny Path",
     "Output Path",
@@ -212,7 +216,6 @@ make_table(
   values = c(
     metadata_path,
     otu_table_path,
-    otu_fasta_path,
     taxonomy_table_path,
     tree_path,
     output_path,
@@ -313,7 +316,7 @@ min_lib   <- min(lib_sizes)
 max_lib   <- max(lib_sizes)
 
 # Start with your candidate depths
-depths <- seq(min_lib, max_lib, by = 100)
+depths <- seq(min_lib, max_lib, by = 1000)
 sample_var <- group
 
 # Initialize list
@@ -385,12 +388,14 @@ PHYLOSEQ_OBJ <- filter_taxa(PHYLOSEQ_OBJ, function(x) sum(x) >= min_ASVs, prune 
 # Add sequencing depth to sample metadata
 sample_data(PHYLOSEQ_OBJ)$SequencingDepth <- sample_sums(PHYLOSEQ_OBJ)
 
+yes_vals <- c("Y","y","Yes","yes","negative","neg","true")
+
 # Identify contaminants with the "combined" method
 contam_combined <- isContaminant(
   PHYLOSEQ_OBJ,
   method = "combined",
   conc = sample_data(PHYLOSEQ_OBJ)$SequencingDepth,
-  neg  = sample_data(PHYLOSEQ_OBJ)$Control == "Y"  # logical vector
+  neg <- sample_data(PHYLOSEQ_OBJ)[[control]] %in% yes_vals
 )
 
 # How many contaminants?
@@ -412,7 +417,7 @@ PHYLOSEQ_OBJ_CLEAN <- prune_taxa(
 
 ```{r decontam_output, include = FALSE}
 # Prior to decontamination
-org_ntaxa <- ntaxa(PHYLOSEQ_OBJ); 
+org_ntaxa <- ntaxa(PHYLOSEQ_OBJ)
 
 # Following decontamination
 decon_ntaxa <- ntaxa(PHYLOSEQ_OBJ_CLEAN)
@@ -426,12 +431,18 @@ The decontam package was used in a combination method taking into account the se
 
 From this point, controls are no longer needed for analysis and have been removed. The following tables include basic information (such as abundance/raw count tables are each taxonomic level). These tables can be found here: `r otupath`
 
-```{r basic_info_table, include=FALSE}
-### Overide Original Object to remove controls. 
-PHYLOSEQ_OBJ <- PHYLOSEQ_OBJ_CLEAN
-PHYLOSEQ_OBJ <- subset_samples(PHYLOSEQ_OBJ_CLEAN, Control != "Y")
-table(sample_data(PHYLOSEQ_OBJ)$Control)
+```{r}
+sample_ctrl <- "Control"
+```
 
+```{r}
+PHYLOSEQ_OBJ <- PHYLOSEQ_OBJ_CLEAN
+sample_data(PHYLOSEQ_OBJ)[[sample_ctrl]] <- as.character(sample_data(PHYLOSEQ_OBJ)[[sample_ctrl]])
+PHYLOSEQ_OBJ <- subset_samples(PHYLOSEQ_OBJ, get(sample_ctrl) != "Y")
+table(sample_data(PHYLOSEQ_OBJ)[[sample_ctrl]])
+```
+
+```{r basic_info_table, include=FALSE}
 # Basic Information
 
 ## Output OTU Table
@@ -507,12 +518,12 @@ head(otu)
 
 set.seed(2006576)
 
-axis_order =  phyloseq::sample_data(PHYLOSEQ_OBJ)$type %>%unique();axis_order
+axis_order =  phyloseq::sample_data(PHYLOSEQ_OBJ)[[group]] %>%unique();axis_order
   ps11 <-  PHYLOSEQ_OBJ
   mapping = phyloseq::sample_data(ps11)
   ps11 = phyloseq::filter_taxa(ps11, function(x) sum(x ) >0 , TRUE); ps11
-  colnames(mapping) = gsub(group,"AA", colnames(mapping))
-  mapping$Group = mapping$AA
+  colnames(mapping) = gsub(group,"Comparative_Group", colnames(mapping))
+  mapping$Group = mapping$Comparative_Group
   mapping$Group = as.factor(mapping$Group)
 
   # mapping$Group
@@ -557,7 +568,6 @@ write.csv(result,FileName,sep = "")
 FileName <- paste(alppath,"/alpha_diversity_index.csv", sep = "")
 write.csv(index,FileName,sep = "")
 ```
-
 ```{r generating_alpha_plot, include = FALSE}
  ## Generate a Alpha Box Plot
 
@@ -567,43 +577,133 @@ write.csv(index,FileName,sep = "")
 ```
 
 #### Alpha Diversity Plot (All Distances)
-```{r stat_plot, fig.width=10, fig.height=10}
+
+Alpha Diversity measures are a comparison of in-group diversity (e.g., looking at the differences within certain sample groups).  
+The different diversity measures are:
+
+* ACE (Abundance-based Coverage Estimator)
+* Chao1 (non-parametric estimator for total species richness)
+* Inverse Simpson (1 / Simpson’s Index, measures richness and evenness)
+* Simpson Evenness
+* Pielou Evenness (evenness of species abundances)
+* Richness (absolute number of species)
+* Shannon (species abundance + evenness)
+
+```{r stat_plot, fig.width=10, fig.height=10,echo=FALSE}
+
 
 df <- result1[[2]] %>%
-  mutate(
-    dd = suppressWarnings(as.numeric(dd))  # ensure numeric
+  mutate(dd = suppressWarnings(as.numeric(dd)))
+
+
+df <- df %>%
+  mutate(group = factor(group, levels = sort(unique(group), ignore.case = TRUE)))
+
+
+# Compute pairwise Wilcoxon tests per facet (name) across groups
+pairwise_stats <- df %>%
+  group_by(name) %>%
+  filter(n_distinct(group[!is.na(dd)]) >= 2) %>%      # keep only facets with >=2 groups
+  pairwise_wilcox_test(dd ~ group, p.adjust.method = "fdr") %>%
+  ungroup()
+
+# Add bracket positions per facet so labels don’t overlap
+pairwise_stats <- pairwise_stats %>%
+  group_by(name) %>%
+  add_x_position(x = "group") %>%
+  add_y_position(data = df, formula = dd ~ group, step.increase = 0.12) %>%
+  ungroup()
+
+p1_1 <- ggplot(df, aes(x = group, y = dd)) +
+  geom_boxplot(aes(fill = group), alpha = 1, outlier.shape = NA) +
+  geom_point(aes(color = group), size = 3, alpha = 0.5) +
+  labs(x = "", y = "") +
+  facet_wrap(~ name, scales = "free_y", ncol = 3) +
+  scale_x_discrete(drop = FALSE) +
+  scale_y_continuous(expand = expansion(mult = c(0.1, 0.1))) +
+  guides(color = guide_legend(title = NULL),
+         shape = guide_legend(title = NULL),
+         fill  = guide_legend(title = NULL)) +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
+
+# Annotate with precomputed stats (this only draws; it does not recompute)
+p1_1 <- p1_1 +
+  stat_pvalue_manual(
+    pairwise_stats,
+    label = "p.adj.signif",     # or "p.adj" for numeric p-values
+    hide.ns = TRUE,
+    tip.length = 0.01
   )
 
-
-p1_1 = ggplot(df, aes(x=group , y=dd )) +
-   geom_boxplot(alpha=1, aes(fill=group)) +
-   geom_point(aes(color = group), size=3, alpha=0.5)+
-   labs(x="", y="")+
-   facet_wrap(.~name,scales="free_y",ncol  = 3) +
-   scale_x_discrete(limits = axis_order) +
-   scale_y_continuous(expand = expansion(mult = c(0.1, 0.1))) +
-   guides(color=guide_legend(title = NULL),
-          shape=guide_legend(title = NULL),
-          fill = guide_legend(title = NULL)
-          ) +
-   theme_bw() +
-   theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1)) +
-   ggpubr::geom_pwc(
-     method = "wilcox.test",
-     label = 'p.signif',
-     hide.ns = TRUE,
-     show.legend = TRUE)
-
- FileName <- paste(alppath,"Alpha_box", ".svg", sep = "")
- ggsave(FileName, p1_1, width = 15, height = 15, limitsize = FALSE)
-
+# Save
+FileName <- paste(alppath, "Alpha_box", ".svg", sep = "")
+ggsave(FileName, p1_1, width = 15, height = 15, limitsize = FALSE)
 ```
-
-#### Alpha Diversity Measures
-
-```{r plotting_diversity_to_RMD, fig.width=10, fig.height=10}
+##### This PLOT
+```{r bxcbxcplotting_diversity_to_RMD, fig.width=10, fig.height=10,echo=FALSE}
  p1_1
 ```
+
+**NB:** if no error bars appear on the plots, no significant comparison was identified. 
+
+```{r}
+
+df_single <- df %>% 
+  filter(name == primary_distance_measure)
+
+pairwise_single <- pairwise_stats %>% 
+  filter(name == primary_distance_measure)
+
+
+p_single <- ggplot(df_single, aes(x = group, y = dd)) +
+  geom_boxplot(aes(fill = group), alpha = 1, outlier.shape = NA) +
+  geom_point(aes(color = group), size = 3, alpha = 0.5) +
+  labs(x = "", y = primary_distance_measure) +
+  scale_x_discrete(drop = FALSE) +
+  scale_y_continuous(expand = expansion(mult = c(0.1, 0.1))) +
+  guides(color = guide_legend(title = NULL),
+         shape = guide_legend(title = NULL),
+         fill  = guide_legend(title = NULL)) +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
+
+
+p_single <- p_single +
+  stat_pvalue_manual(
+    pairwise_single,
+    label = "p.adj.signif",
+    hide.ns = TRUE,
+    tip.length = 0.01
+  )
+
+```
+
+```{r bcbxcplotting_diversity_to_RMD, fig.width=10, fig.height=10,echo=FALSE}
+p_single
+```
+
+**NB:** if no error bars appear on the plots, no significant comparison was identified. 
+
+#### Statistical Analysis (Kruskal-Wallis)
+
+```{r}
+kw <- kruskal.test(dd ~ group, data = df)
+kw
+```
+
+```{r post_hoc_test}
+if (kw$p.value > 0.05) {
+  message("No significant difference identified (KW p = ",
+          signif(kw$p.value, 3),
+          "). Will not perform a post-hoc test.")
+  dunn_res <- NULL
+} else {
+  dunn_res <- dunn_test(data = df, dd ~ group, p.adjust.method = "fdr")
+  print(dunn_res)
+}
+```
+
 
 #### Statistical Analysis
 ```{r ANOVA_on_Alpha}
@@ -611,37 +711,37 @@ p1_1 = ggplot(df, aes(x=group , y=dd )) +
 
  # ANOVA for each metric
 
- anova_Shannon <- anova_test(data = index, Shannon ~ AA) %>%
+ anova_Shannon <- anova_test(data = index, Shannon ~ Comparative_Group) %>%
    get_anova_table() %>%
    as_tibble() %>%                # Convert to tibble
    mutate(metric = "Shannon")
 
- anova_InvSimpson <- anova_test(data = index, Inv_Simpson ~ AA) %>%
+ anova_InvSimpson <- anova_test(data = index, Inv_Simpson ~ Comparative_Group) %>%
    get_anova_table() %>%
    as_tibble() %>%
    mutate(metric = "Inv_Simpson")
 
- anova_Pielou <- anova_test(data = index, Pielou_evenness ~ AA) %>%
+ anova_Pielou <- anova_test(data = index, Pielou_evenness ~ Comparative_Group) %>%
    get_anova_table() %>%
    as_tibble() %>%
    mutate(metric = "Pielou_evenness")
 
- anova_Evenness <- anova_test(data = index, Simpson_evenness ~ AA) %>%
+ anova_Evenness <- anova_test(data = index, Simpson_evenness ~ Comparative_Group) %>%
    get_anova_table() %>%
    as_tibble() %>%
    mutate(metric = "Simpson_evenness")
 
- anova_Richness <- anova_test(data = index, Richness ~ AA) %>%
+ anova_Richness <- anova_test(data = index, Richness ~ Comparative_Group) %>%
    get_anova_table() %>%
    as_tibble() %>%
    mutate(metric = "Richness")
 
- anova_Chao1 <- anova_test(data = index, Chao1 ~ AA) %>%
+ anova_Chao1 <- anova_test(data = index, Chao1 ~ Comparative_Group) %>%
    get_anova_table() %>%
    as_tibble() %>%
    mutate(metric = "Chao1")
 
- anova_ACE <- anova_test(data = index, ACE ~ AA) %>%
+ anova_ACE <- anova_test(data = index, ACE ~ Comparative_Group) %>%
    get_anova_table() %>%
    as_tibble() %>%
    mutate(metric = "ACE")
@@ -651,13 +751,13 @@ p1_1 = ggplot(df, aes(x=group , y=dd )) +
                         anova_Richness, anova_Chao1, anova_ACE)
 
  posthoc_all <- bind_rows(
-   tukey_hsd(index, Shannon ~ AA) %>% mutate(metric = "Shannon"),
-   tukey_hsd(index, Inv_Simpson ~ AA) %>% mutate(metric = "Inv_Simpson"),
-   tukey_hsd(index, Pielou_evenness ~ AA) %>% mutate(metric = "Pielou_evenness"),
-   tukey_hsd(index, Simpson_evenness ~ AA) %>% mutate(metric = "Simpson_evenness"),
-   tukey_hsd(index, Richness ~ AA) %>% mutate(metric = "Richness"),
-   tukey_hsd(index, Chao1 ~ AA) %>% mutate(metric = "Chao1"),
-   tukey_hsd(index, ACE ~ AA) %>% mutate(metric = "ACE")
+   tukey_hsd(index, Shannon ~ Comparative_Group) %>% mutate(metric = "Shannon"),
+   tukey_hsd(index, Inv_Simpson ~ Comparative_Group) %>% mutate(metric = "Inv_Simpson"),
+   tukey_hsd(index, Pielou_evenness ~ Comparative_Group) %>% mutate(metric = "Pielou_evenness"),
+   tukey_hsd(index, Simpson_evenness ~ Comparative_Group) %>% mutate(metric = "Simpson_evenness"),
+   tukey_hsd(index, Richness ~ Comparative_Group) %>% mutate(metric = "Richness"),
+   tukey_hsd(index, Chao1 ~ Comparative_Group) %>% mutate(metric = "Chao1"),
+   tukey_hsd(index, ACE ~ Comparative_Group) %>% mutate(metric = "ACE")
  )
 
 
@@ -686,14 +786,14 @@ A beta diversity ordination plot is generated using the `r method` method and th
 
 ord_df <- ordinate(PHYLOSEQ_OBJ, 
                   method = method, 
-                  distance = dist, 
+                  distance = dist,
                   weighted = TRUE)
 
 stress_val <- ord_df$stress
 
 ord_plot <- plot_ordination(PHYLOSEQ_OBJ, 
                             ord_df,
-                            color = "Sample_Name",
+                            color = group,
                             axes = c(1,2)) +
   stat_ellipse(type = "t", 
                linetype = 2, 
@@ -726,7 +826,7 @@ FileName <- paste(betapath,"/", method, "SeqDepth_ordination.svg", sep = "")
 ggsave(FileName, ord_plot, width = 20, height = 10, limitsize = FALSE)
 ```
 
-```{r plot_ordination, fig.align='center'}
+```{r plot_ordination, fig.align='center',echo=FALSE}
 ggplotly(ord_plot)
 ```
 
@@ -734,87 +834,86 @@ ggplotly(ord_plot)
 
 ## Taxonomic Analysis
 
-```{r taxanomic_dot, include=FALSE}
- # Collapse to chosen level
- PHYLOSEQ_OBJ_TAXA <- tax_glom(PHYLOSEQ_OBJ, taxrank = tax_level)
-
- # Relative abundance
- PHYLOSEQ_OBJ_RELATIVE_ABUND <- transform_sample_counts(PHYLOSEQ_OBJ_TAXA, function(x) x / sum(x))
-
-  #Melt
- PHYLOSEQ_OBJ_PLOT <- psmelt(PHYLOSEQ_OBJ_RELATIVE_ABUND)
-
- # ---- NEW PART: Identify top 20 taxa ----
-
- top_taxa <- PHYLOSEQ_OBJ_PLOT %>%
-   as_tibble() %>%  # ensure a tibble, not an S4/IRanges object
-   group_by(.data[[tax_level]]) %>%
-   summarise(mean_abundance = mean(Abundance, na.rm = TRUE), .groups = "drop") %>%
-   arrange(desc(mean_abundance)) %>%
-   dplyr::slice(1:30) %>%
-   dplyr::pull(.data[[tax_level]]) %>%
-   unique()
-
-
- # ---- Recode everything else as "Other" ----
- PHYLOSEQ_OBJ_PLOT <- PHYLOSEQ_OBJ_PLOT %>%
-   mutate(!!sym(tax_level) := if_else(!!sym(tax_level) %in% top_taxa,
-                                      !!sym(tax_level),
-                                      "Other"))
-
-
- PHYLOSEQ_OBJ_PLOT <- PHYLOSEQ_OBJ_PLOT %>%
-   group_by(Sample, Sample_Name, !!sym(tax_level)) %>%
-   summarise(Abundance = sum(Abundance), .groups = "drop")
-
-
- taxa_order <- c(top_taxa, "Other")
- PHYLOSEQ_OBJ_PLOT[[tax_level]] <- factor(PHYLOSEQ_OBJ_PLOT[[tax_level]], levels = taxa_order)
-
- # Filter out abundances below 0.1
- PHYLOSEQ_OBJ_PLOT <- PHYLOSEQ_OBJ_PLOT %>%
-   filter(Abundance >= 0.01) # Do not show the rare samples
-
- PHYLOSEQ_OBJ_PLOT$label <- paste0(PHYLOSEQ_OBJ_PLOT$Sample.name, "_",  PHYLOSEQ_OBJ_PLOT$type_detail)
-
- ## Wrap the Facet Labels
- facet_labels_wrapped <- setNames(
-   stringr::str_wrap(levels(PHYLOSEQ_OBJ_PLOT$type), width = 10),
-   levels(PHYLOSEQ_OBJ_PLOT$type)
- )
-
- p4 <- ggplot(PHYLOSEQ_OBJ_PLOT,
-        aes(x = Sample,
-            y = !!sym(tax_level),
-          size = Abundance,
-          color = !!sym(tax_level))) +
- geom_point(alpha = 0.7) +
- theme_bw() +
- facet_wrap(~ Sample_Name, scales = 'free_x', nrow = 1) +
- theme(axis.text.x = element_text(angle = 90, vjust = 0.5)) +
- ylab(tax_level) +
- xlab("") +
- scale_size_continuous(range = c(1, 20)) +
-   guides(color = guide_legend(nrow = 20, byrow = FALSE, override.aes = list(size = 6))) +
-   theme(strip.text = element_text(size = 12, face = "bold")) +
-   theme(axis.title.x=element_text(size=12), axis.title.y=element_text(size=12)) +
-   theme(axis.text.x=element_text(size=12), axis.text.y=element_text(size=12)) +
-   theme(legend.title=element_text(size=12, face = "bold"), legend.text=element_text(size=12)) +
-   theme(legend.position="right")
-
-
- FileName <- paste(alppath,"Dot_Taxonomy.svg", sep = "")
- ggsave(FileName, p4, width = 30, height = 10, limitsize = FALSE)
+```{r taxanomic_dot, include=FALSE,echo=FALSE}
+#  # Collapse to chosen level
+#  PHYLOSEQ_OBJ_TAXA <- tax_glom(PHYLOSEQ_OBJ, taxrank = tax_level)
+# 
+#  # Relative abundance
+#  PHYLOSEQ_OBJ_RELATIVE_ABUND <- transform_sample_counts(PHYLOSEQ_OBJ_TAXA, function(x) x / sum(x))
+# 
+#   #Melt
+#  PHYLOSEQ_OBJ_PLOT <- psmelt(PHYLOSEQ_OBJ_RELATIVE_ABUND)
+# 
+#  # ---- NEW PART: Identify top 20 taxa ----
+# 
+#  top_taxa <- PHYLOSEQ_OBJ_PLOT %>%
+#    as_tibble() %>%  # ensure a tibble, not an S4/IRanges object
+#    group_by(.data[[tax_level]]) %>%
+#    summarise(mean_abundance = mean(Abundance, na.rm = TRUE), .groups = "drop") %>%
+#    arrange(desc(mean_abundance)) %>%
+#    dplyr::slice(1:30) %>%
+#    dplyr::pull(.data[[tax_level]]) %>%
+#    unique()
+# 
+# 
+#  # ---- Recode everything else as "Other" ----
+#  PHYLOSEQ_OBJ_PLOT <- PHYLOSEQ_OBJ_PLOT %>%
+#    mutate(!!sym(tax_level) := if_else(!!sym(tax_level) %in% top_taxa,
+#                                       !!sym(tax_level),
+#                                       "Other"))
+# 
+# 
+# 
+# PHYLOSEQ_OBJ_PLOT <- PHYLOSEQ_OBJ_PLOT %>%
+#    group_by(!!sym(group), !!sym(tax_level)) %>%
+#    summarise(Abundance = sum(Abundance), .groups = "drop")
+# 
+# 
+# 
+#  taxa_order <- c(top_taxa, "Other")
+#  PHYLOSEQ_OBJ_PLOT[[tax_level]] <- factor(PHYLOSEQ_OBJ_PLOT[[tax_level]], levels = taxa_order)
+# 
+#  # Filter out abundances below 0.1
+#  PHYLOSEQ_OBJ_PLOT <- PHYLOSEQ_OBJ_PLOT %>%
+#    filter(Abundance >= 0.01) # Do not show the rare samples
+# 
+#  ## Wrap the Facet Labels
+#  facet_labels_wrapped <- setNames(
+#    stringr::str_wrap(levels(PHYLOSEQ_OBJ_PLOT[[group]]), width = 10),
+#    levels(PHYLOSEQ_OBJ_PLOT[[group]])
+#  )
+# 
+#  p4 <- ggplot(PHYLOSEQ_OBJ_PLOT,
+#         aes(x = SampleID,
+#             y = !!sym(tax_level),
+#           size = Abundance,
+#           color = !!sym(tax_level))) +
+#  geom_point(alpha = 0.7) +
+#  theme_bw() +
+#  facet_wrap(~ type, scales = 'free_x', nrow = 1) +
+#  theme(axis.text.x = element_text(angle = 90, vjust = 0.5)) +
+#  ylab(tax_level) +
+#  xlab("") +
+#  scale_size_continuous(range = c(1, 20)) +
+#    guides(color = guide_legend(nrow = 20, byrow = FALSE, override.aes = list(size = 6))) +
+#    theme(strip.text = element_text(size = 12, face = "bold")) +
+#    theme(axis.title.x=element_text(size=12), axis.title.y=element_text(size=12)) +
+#    theme(axis.text.x=element_text(size=12), axis.text.y=element_text(size=12)) +
+#    theme(legend.title=element_text(size=12, face = "bold"), legend.text=element_text(size=12)) +
+#    theme(legend.position="right")
+# 
+# 
+#  FileName <- paste(alppath,"Dot_Taxonomy.svg", sep = "")
+#  ggsave(FileName, p4, width = 30, height = 10, limitsize = FALSE)
 ```
 
 ```{r plotting_taxonomy, fig.width=10, fig.height=20, echo=FALSE}
-ggplotly(p4, width = 1500, height = 1000)
+#ggplotly(p4, width = 1500, height = 1000)
 ```
 
 ## Differential Abundance
 
 
 ## Functional Prediction
-
 
 
