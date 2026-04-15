@@ -210,49 +210,27 @@ sample_data(psq_obj_ref)$Sample.details <- recode(
   "Control" = "Control"
 )
 
-psq_obj_ref <- subset_samples(psq_obj_ref, !Location %in% c("Negative", "Blank", "Mock-communityA", "Mock-communityB"))
-psq_obj_ref <- prune_samples(sample_sums(psq_obj_ref) > 0, psq_obj_ref)
+psq_obj_ref <- subset_samples(psq_obj_ref, !Location %in% c("Negative", "Blank", "Mock-communityA", "Mock-communityB",
+                                                            "Sluvad", "Cefni", "Glascoed", "Preseli"))
 
-## Remove taxa which are only appearing in one sample (experiments were run in triplicate).
-psq_obj_Hurleston <- subset_samples(psq_obj_ref, Location == "Hurleston")
-
-## Remove taxa which are only appearing in one sample (experiments were run in triplicate).
-psq_obj_Hurleston_Clean <- prune_taxa(taxa_sums(psq_obj_Hurleston) > 0, psq_obj_Hurleston)
-
-sample_data(psq_obj_Hurleston_Clean)$Sample.details <- as.character(sample_data(psq_obj_Hurleston_Clean)$Sample.details)
-
-
-sample_data(psq_obj_Hurleston_Clean)$Sample.details <- trimws(sample_data(psq_obj_Hurleston_Clean)$Sample.details)
-
-sample_data(psq_obj_Hurleston_Clean)$Sample.details <- recode(
-  sample_data(psq_obj_Hurleston_Clean)$Sample.details,
-  "RGF1.Backwash" = "Backwash",
-  "RGF.Water" = "Backwash-Water"
-)
-
-sample_data(psq_obj_Hurleston_Clean)$Sample.details <- as.character(sample_data(psq_obj_Hurleston_Clean)$Sample.details)
-sample_data(psq_obj_Hurleston_Clean)$Sample.details <- factor(
-  sample_data(psq_obj_Hurleston_Clean)$Sample.details,
-  levels = c(
-    "RAW-Water",
-    "CLR-Water",
-    "DAF-Sludge",
-    "RGF",
-    "Backwash-Water",
-    "Backwash",
-    "Control"
-  )
+## Removing taxa which appear a total of 10 or less across all samples
+physeq_filtered <- prune_taxa(
+  taxa_sums(psq_obj_ref) >= 10,
+  psq_obj_ref
 )
 
 ## Removing Control Groups
 yes_vals <- c("Y", "y", "Yes", "yes", "negative", "neg", "true")
 sample_ctrl <- "num"
 
-psq_obj_Hurleston_Clean <- subset_samples(psq_obj_Hurleston_Clean, num != "Y")
-table(sample_data(psq_obj_Hurleston_Clean)[[sample_ctrl]])
-
 sample_data(psq_obj_Hurleston_Clean)$Sequencing.depth <- sample_sums(psq_obj_Hurleston_Clean)
 sample_data(psq_obj_ref)$Sequencing.depth <- sample_sums(psq_obj_ref)
+
+psq_obj_ref <- prune_samples(
+  sample_data(psq_obj_ref)$Sequencing.depth >= 1000,
+  psq_obj_ref
+)
+
 ```
 
 ```{r}
@@ -300,10 +278,9 @@ group_palette <- c(
 #                                                                              #
 ################################################################################
 
-**(1.) ALPHA RAREFRACTION CURVE**
+**(1.) ALPHA RAREFRACTION CURVE OF HURLESTON**
 
 ```{r}
-
 # Define depths
 lib_sizes <- sample_sums(psq_obj_Hurleston_Clean)
 min_lib   <- min(lib_sizes)
@@ -342,27 +319,105 @@ summary_df <- rare_df %>%
     Richness_se   = sd(Observed, na.rm = TRUE) / sqrt(n())
   ) %>%
   ungroup()
-```
-**(2.) Plotting Alpha Rarefraction Curve**
 
-```{r}
-
-Rare.plot <- ggplot(summary_df, aes(x = Depth, y = Richness_mean, group = SampleID, color = Sample.details)) +
+Rare.plot.UU <- ggplot(summary_df, aes(x = Depth, y = Richness_mean, group = SampleID, color = Sample.details)) +
   geom_line(linewidth = 1) +
   scale_color_discrete(name = "Sample") +
   scale_x_continuous(breaks = seq(0, 100000, by = 5000)) +
   labs(x = "Sequencing Depth (n)", y = "Mean Observed ASVs (n)") +
   theme_bw()
 
-# ggsave(
-#   "C:/Users/Danie/OneDrive - Cardiff University/004 - Cardiff University - Senior Research Technician/UnitedUtilities/000 - Reports/Code Repository/Alpha_Rarefraction.svg",
-#   Rare.plot,
-#   height = 5,
-#   width = 10
-# )
+filename <- paste0(output_directory,"rarefraction_curve_Hurleston.svg")
+ggsave(filename, Rare.plot.UU, height = 5, width = 10)
+```
+**(1.) ALPHA RAREFRACTION CURVE OF DCWW/HURLESTON**
+
+```{r}
+# Define depths
+lib_sizes <- sample_sums(psq_obj_ref)
+min_lib   <- min(lib_sizes)
+max_lib   <- max(lib_sizes)
+
+# Start with your candidate depths
+depths <- seq(1, max_lib, by = 10000)
+sample_var <- "Sample.name"
+
+# Initialize list
+richness_list <- list()
+
+for (d in depths) {
+  set.seed(2006576)
+  rare_dat <- rarefy_even_depth(psq_obj_ref, sample.size = d, rngseed = 2006576, verbose = FALSE, replace = FALSE)
+
+  richness <- estimate_richness(rare_dat, measures = "Observed")
+  richness$SampleI.name <- rownames(richness)
+  richness$Depth <- d
+  richness_list[[as.character(d)]] <- richness
+}
+
+# Combine results
+rare_df <- bind_rows(richness_list)
+
+# Add metadata
+metadata <- data.frame(sample_data(psq_obj_ref))
+metadata$SampleID <- rownames(metadata)
+rare_df <- left_join(rare_df, metadata, by = "Sample.name")
+
+# Summarize mean & SE per group
+summary_df <- rare_df %>%
+  group_by(Depth, !!sym(sample_var)) %>%
+  mutate(
+    Richness_mean = mean(Observed, na.rm = TRUE),
+    Richness_se   = sd(Observed, na.rm = TRUE) / sqrt(n())
+  ) %>%
+  ungroup()
+
+Rare.plot <- ggplot(summary_df, aes(x = Depth, y = Richness_mean, group = Sample.name, color = Sample.details)) +
+  geom_line(linewidth = 1) +
+  scale_color_discrete(name = "Sample") +
+  scale_x_continuous(breaks = seq(0, 500000, by = 5000)) +
+  xlim(0,100000) +
+  labs(x = "Sequencing Depth (n)", y = "Mean Observed ASVs (n)") +
+  theme_bw()
 
 filename <- paste0(output_directory,"rarefraction_curve_Hurleston.svg")
 ggsave(filename, Rare.plot, height = 5, width = 10)
+```
+
+
+```{r}
+psq_obj_ref_rare <- rarefy_even_depth(psq_obj_ref, 12000, rngseed = 202020)
+psq_obj_ref_rare_fam <- tax_glom(psq_obj_ref_rare, taxrank = "Family")
+
+## Remove taxa which are only appearing in one sample (experiments were run in triplicate).
+psq_obj_Hurleston <- subset_samples(psq_obj_ref_rare_fam, Location == "Hurleston")
+
+## Remove taxa which are only appearing in one sample (experiments were run in triplicate).
+psq_obj_Hurleston_Clean <- prune_taxa(taxa_sums(psq_obj_Hurleston) > 0, psq_obj_Hurleston)
+
+sample_data(psq_obj_Hurleston_Clean)$Sample.details <- as.character(sample_data(psq_obj_Hurleston_Clean)$Sample.details)
+
+sample_data(psq_obj_Hurleston_Clean)$Sample.details <- trimws(sample_data(psq_obj_Hurleston_Clean)$Sample.details)
+
+sample_data(psq_obj_Hurleston_Clean)$Sample.details <- recode(
+  sample_data(psq_obj_Hurleston_Clean)$Sample.details,
+  "RGF1.Backwash" = "Backwash",
+  "RGF.Water" = "Backwash-Water"
+)
+
+sample_data(psq_obj_Hurleston_Clean)$Sample.details <- as.character(sample_data(psq_obj_Hurleston_Clean)$Sample.details)
+sample_data(psq_obj_Hurleston_Clean)$Sample.details <- factor(
+  sample_data(psq_obj_Hurleston_Clean)$Sample.details,
+  levels = c(
+    "RAW-Water",
+    "CLR-Water",
+    "DAF-Sludge",
+    "RGF",
+    "Backwash-Water",
+    "Backwash",
+    "Control"
+  )
+)
 ```
 
 
@@ -371,17 +426,9 @@ ggsave(filename, Rare.plot, height = 5, width = 10)
 **(3.) Calculating Alpha Diversity Distances**
 
 ```{r}
-############################################################
-# 0. USER SETTINGS
-############################################################
-
 group      <- "Sample.details"   # column used for grouping
 ps11       <- psq_obj_Hurleston_Clean       # your phyloseq object
 
-
-############################################################
-# 1. PREPARE SAMPLE DATA
-############################################################
 
 # Extract sample metadata
 mapping <- phyloseq::sample_data(ps11)
@@ -395,23 +442,11 @@ colnames(mapping) <- gsub(group, "Comparative_Group", colnames(mapping))
 # Create final grouping variable
 mapping$Group <- as.factor(mapping$Comparative_Group)
 
-
-
-############################################################
-# 2. EXTRACT OTU TABLE
-############################################################
-
 # Convert OTU table into a standard count matrix (samples x taxa)
 count <- as.data.frame(t(ranacapa::vegan_otu(ps11)))
 
 # Transpose back for vegan functions that expect taxa as columns
 x <- t(count)
-
-
-
-############################################################
-# 3. COMPUTE ALPHA DIVERSITY METRICS
-############################################################
 
 # Shannon diversity
 Shannon <- vegan::diversity(x, index = "shannon")
@@ -429,7 +464,7 @@ S2 <- rowSums(x > 0)
 Pielou_evenness <- Shannon / log(Richness)
 
 # Simpson evenness
-Simpson_evenness <- Inv_Simpson / Richness
+Simpson <- Inv_Simpson / Richness
 
 # Chao1, ACE, and richness from estimateR
 est <- vegan::estimateR(x)
@@ -440,32 +475,20 @@ report <- cbind(
   Shannon,
   Inv_Simpson,
   Pielou_evenness,
-  Simpson_evenness,
+  Simpson,
   Richness,
   ACE
 )
-
-
-
-############################################################
-# 4. MERGE DIVERSITY METRICS WITH SAMPLE METADATA
-############################################################
 
 alp <- merge(mapping, report, by = "row.names", all = FALSE)
 
 # Store complete alpha-diversity table
 alpha_table <- alp
 
-
-
-############################################################
-# 5. PREPARE DATA FOR STATISTICAL TESTING
-############################################################
-
 # Select metrics to test
 metrics_to_test <- c(
   "Shannon", "Inv_Simpson", "Pielou_evenness",
-  "Simpson_evenness", "Richness", "ACE"
+  "Simpson", "Richness", "ACE"
 )
 
 
@@ -479,11 +502,107 @@ data_for_test <- cbind(
   alpha_table[, metrics_to_test]
 )
 
+
 ```
 
-## Linear Model for Distance vs Sequencing Depth
-
 **(4.) Plotting Distance Matrices**
+
+```{r, fig.height=10, fig.width=5}
+
+alpha_metrics <- c(
+  "Shannon",
+  "Richness",
+  "ACE",
+  "Simpson",
+  "Inv_Simpson",
+  "Pielou_evenness"
+)
+
+
+make_alpha_plot <- function(data, metric, palette) {
+
+  # Pairwise Wilcoxon
+  sigdf <- pairwise.wilcox.test(
+    x = data[[metric]],
+    g = data$Group,
+    p.adjust.method = "BH"
+  )
+
+  pw_df <- as.data.frame(as.table(sigdf$p.value)) %>%
+    rename(
+      group1 = Var1,
+      group2 = Var2,
+      p = Freq
+    ) %>%
+    filter(!is.na(p)) %>%
+    mutate(
+      p.signif = case_when(
+        p <= 0.0001 ~ "****",
+        p <= 0.001  ~ "***",
+        p <= 0.01   ~ "**",
+        p <= 0.05   ~ "*",
+        TRUE        ~ "ns"
+      )
+    ) %>%
+    filter(p.signif != "ns")
+
+  # Dynamic y positions
+  y_max <- max(data[[metric]], na.rm = TRUE)
+  step  <- 0.05 * y_max
+
+  pw_df <- pw_df %>%
+    arrange(p) %>%
+    mutate(y.position = y_max + row_number() * step)
+
+  # Plot
+  ggplot(data, aes(x = Group, y = .data[[metric]], fill = Group)) +
+    geom_boxplot() +
+    stat_boxplot(geom = "errorbar", width = 0.2) +
+    geom_point(aes(color = Group), alpha = 0.8) +
+    labs(
+      title = metric,
+      y = metric,
+      fill = "Sample"
+    ) +
+    theme_bw() +
+    theme(
+      axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1),
+      plot.title = element_text(hjust = 0.5)
+    ) +
+    scale_fill_manual(values = palette) +
+    scale_color_manual(values = palette) +
+    guides(color = "none") +
+    stat_pvalue_manual(
+      pw_df,
+      label = "p.signif",
+      tip.length = 0.01
+    )
+}
+
+
+alpha_plots <- lapply(
+  alpha_metrics,
+  make_alpha_plot,
+  data = data_for_test,
+  palette = group_palette
+)
+
+names(alpha_plots) <- alpha_metrics
+
+
+final_alpha_plot <- ggarrange(
+  plotlist = alpha_plots,
+  ncol = 3,
+  nrow = 2,
+  common.legend = TRUE,
+  legend = "right"
+)
+
+final_alpha_plot
+
+filename <- paste0(output_directory,"Alpha_Diversity_HRUU.svg")
+ggsave(filename, final_alpha_plot, height = 7.5, width = 10)
+```
 
 
 ```{r, fig.width=10, fig.height=10}
@@ -620,17 +739,14 @@ ggsave(filename, combined_plot, height = 10, width = 10)
 **(1.) Hurleston Data**
 
 ```{r}
-
-psq_obj_Hurleston_Clean <- tax_glom(psq_obj_Hurleston_Clean, taxrank = "Family")
-psq_obj_Hurleston_Clean_rel <- transform_sample_counts(psq_obj_Hurleston_Clean, function(x) x / sum(x))
+psq_obj_Hurleston_Clean_rel <- normalize(psq_obj_Hurleston_Clean, method = "relative")
 psq_obj_Hurleston_Clean_rel <- prune_taxa(taxa_sums(psq_obj_Hurleston_Clean_rel) > 0, psq_obj_Hurleston_Clean_rel)
 
-Hurleston_beta <- plotbeta(psq_obj_Hurleston_Clean_rel, group = "Sample.details") + 
-  labs(colour = "Sample Stage") +
-  scale_colour_manual(values = group_palette)
+HRUU_beta <- plotbeta(psq_obj_Hurleston_Clean_rel, group = "Sample.details") + 
+  labs(colour = "") 
 
 filename <- paste0(output_directory,"beta_diversity_Hurleston.svg")
-ggsave(filename, Hurleston_beta, height = 5, width = 7.5)
+ggsave(filename, IoM_beta, height = 5, width = 7.5)
 ```
 
 ```{r, fig.height=10, fig.width=10}
