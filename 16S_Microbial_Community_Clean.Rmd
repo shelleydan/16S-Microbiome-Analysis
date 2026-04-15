@@ -1,0 +1,1153 @@
+---
+title: "16S Bacterial Community Analysis 2026"
+author: "Dan Shelley"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+################################################################################
+#                                                                              #
+#            **IT IS RECOMMENDED TO RUN THIS RMD CHUNK BY CHUNK,**             #
+#                                                                              #
+#         **THIS MARKDOWN CAN ALSO FUNCTION AS A CLASSIC 16S ANALYSIS**        #
+#                                                                              #
+################################################################################
+
+################################################################################
+#                                                                              #
+#                       **Methodology & Package Summary**                      #
+#                                                                              #
+#        * Phyloseq is used to generate a Phyloseq object from Qiime2          #
+#          outputs.                                                            #
+#                                                                              #
+#        * Taxa filtering: No Filtering for Taxa                               #
+#                                                                              #
+#                                                                              #
+#                                                                              #
+#                                                                              #
+#                                                                              #
+#                                                                              #
+#                                                                              #
+#                                                                              #
+#                                                                              #
+#                                                                              #
+#                                                                              #
+#                                                                              #
+#                                                                              #
+################################################################################
+
+################################################################################
+#                                                                              #
+#                            **Loading Libraries**                             #
+#                                                                              #
+################################################################################
+
+```{r library.loading, include=FALSE}
+#devtools::install_github("pmartinezarbizu/pairwiseAdonis/pairwiseAdonis")
+devtools::install_github("gauravsk/ranacapa")
+
+library(dplyr)          #v1.2.0   - Used for data cleaning and manipulation.
+library(randomForest)   #v4.7-1.2 - Random Forest Model (Not Used in 16S Script).
+library(RColorBrewer)   #v1.1-3   - 
+library(vegan)          #v2.7-3   - Plotting Random Forest MDS.
+library(tidyr)          #v1.3.2   - 
+library(ggplot2)        #v4.0.2   - Generic Plotting.
+library(Polychrome)     #v        - Colour palette for taxa bar plot.
+library(ggpubr)         #v        - 
+library(FSA)            #v        - 
+library(stringr)        #v        - 
+library(ggh4x)          #v        -
+library(phyloseq)       #v1.50.0  - Generating objects to store Qiime2 outputs.
+library(microbial)      #v        - Phyloseq disperision statistical test.
+library(pairwiseAdonis) #v        - Pairwise PERMANOVA functions.
+```
+
+################################################################################
+#                                                                              #
+#                          **Defining Input Files**                            #
+#                                                                              #
+################################################################################
+
+```{r}
+ref_metadata_path        <- "C:/Users/Danie/OneDrive - Cardiff University/004 - Cardiff University - Senior Research Technician/Add to Github/DCWW_HRUU_Qiime2_Output/metadata.csv"
+ref_otu_table_path       <- "C:/Users/Danie/OneDrive - Cardiff University/004 - Cardiff University - Senior Research Technician/Add to Github/DCWW_HRUU_Qiime2_Output/feature-table.tsv"
+ref_otu_fasta_path       <- "C:/Users/Danie/OneDrive - Cardiff University/004 - Cardiff University - Senior Research Technician/Add to Github/DCWW_HRUU_Qiime2_Output/aligned-dna-sequences.fasta"
+ref_taxonomy_table_path  <- "C:/Users/Danie/OneDrive - Cardiff University/004 - Cardiff University - Senior Research Technician/Add to Github/DCWW_HRUU_Qiime2_Output/taxonomy.tsv"
+ref_tree_path            <- "C:/Users/Danie/OneDrive - Cardiff University/004 - Cardiff University - Senior Research Technician/Add to Github/DCWW_HRUU_Qiime2_Output/tree.nwk"
+
+output_directory <- "C:/Users/Danie/OneDrive - Cardiff University/004 - Cardiff University - Senior Research Technician/MICROBIAL COMMUNITY ANALYSIS/output/"
+```
+
+################################################################################
+#                                                                              #
+#                       **Generating Phyloseq Object**                         #
+#                                                                              #
+################################################################################
+
+```{r read_in_reference_data}
+feature_table <- read.table(
+  ref_otu_table_path,
+  header = TRUE,
+  row.names = 1,
+  sep = "\t"
+)
+
+feature_table <- as.matrix(feature_table)
+feature_table <- otu_table(feature_table, taxa_are_rows = TRUE)
+
+
+taxonomy_table <- read.table(
+  ref_taxonomy_table_path,
+  sep = "\t",
+  header = TRUE,
+  row.names = 1
+)
+
+taxonomy_split <- strsplit(as.character(taxonomy_table$Taxon), ";")
+
+taxonomy_split_formatted <- lapply(taxonomy_split, function(x) {
+  length(x) <- 7
+  return(x)
+})
+
+taxonomy_mtx <- as.matrix(do.call(rbind, taxonomy_split_formatted))
+
+# Remove prefixes like "d__", "p__" etc.
+taxonomy_mtx <- sub("^[a-z]__*", "", taxonomy_mtx)  # removes d__, p__, etc.
+taxonomy_mtx[taxonomy_mtx == ""] <- NA # now we fill in the remaining empty gaps with NAs so R doesn't get confused
+
+# Set column names (use "Domain" or "Kingdom" as you prefer)
+colnames(taxonomy_mtx) <- c("Domain",
+                            "Phylum",
+                            "Class",
+                            "Order",
+                            "Family",
+                            "Genus",
+                            "Species")
+# Add back the ASV IDs which were lost from our original data frame
+rownames(taxonomy_mtx) <- rownames(taxonomy_table)
+
+# Convert to phyloseq tax_table object
+taxonomy_table <- phyloseq::tax_table(taxonomy_mtx)
+
+metadata_table <- read.csv(
+  ref_metadata_path,
+  row.names = 1,
+  na.strings = "",
+  stringsAsFactors = TRUE
+)
+
+# Match Metadata Sample IDs to those in the feature table
+metadata_table <- metadata_table[rownames(metadata_table) %in% colnames(feature_table), ]
+metadata_table$Sample.name <- rownames(metadata_table)
+
+metadata_table <- sample_data(metadata_table)
+
+rooted_tree <- read_tree(ref_tree_path)
+
+psq_obj_ref <- phyloseq(feature_table, taxonomy_table, metadata_table, rooted_tree)
+```
+
+################################################################################
+#                                                                              #
+#                              **Data Cleaning**                               #
+#                                                                              #
+################################################################################
+
+```{r check_ref_psq}
+
+sample_data(psq_obj_ref)$anon_location <- recode(
+  sample_data(psq_obj_ref)$Location,
+  "Alaw" = "WTW1",
+  "Hirwaun" = "WTW2",
+  "Maerdy" = "WTW3",
+  "Pontsticill" = "WTW4",
+  "Tynywaun" = "WTW5",
+  "Cefni" = "WTW6",
+  "Glascoed" = "WTW7",
+  "Hurleston" = "Hurleston",
+  "Sluvad" = "WTW8",
+  "Preseli" = "WTW9"
+)
+
+sample_data(psq_obj_ref)$anon_location <- as.character(sample_data(psq_obj_ref)$anon_location)
+sample_data(psq_obj_ref)$anon_location <- factor(
+  sample_data(psq_obj_ref)$anon_location,
+  levels = c(
+    "WTW1",
+    "WTW2",
+    "WTW3",
+    "WTW4",
+    "WTW5",
+    "WTW6",
+    "WTW7",
+    "WTW8",
+    "WTW9",
+    "Hurleston"
+  )
+)
+
+sample_data(psq_obj_ref)$Sample.details <- recode(
+  sample_data(psq_obj_ref)$Sample.details,
+  "Clarified.Water" = "CLR-Water",
+  "Clarified-Water" = "CLR-Water",
+  "clarifier-sludge" = "CLR-Sludge",
+  "Clarifier-sludge" = "CLR-Sludge",
+  "COCODAF" = "COCODAF",
+  "COCODAF-sludge" = "COCODAF-Sludge",
+  "COCODAF-backwash" = "COCODAF-Backwash",
+  "DAF-sludge" = "DAF-Sludge",
+  "DAF" = "DAF-Sludge",
+  "DAF-blanket" = "DAF-Blanket",
+  "DAF.Sludge" = "DAF-Sludge",
+  "Filtered-water" = "Filtered-Water",
+  "Prefiltered-water" = "Prefiltered-Water",
+  "Raw-water" = "RAW-Water",
+  "Raw.Water" = "RAW-Water",
+  "RGF-backwash" = "RGF-Backwash",
+  "RGF-water" = "RGF-Water",
+  "RGF.water" = "RGF-Water",
+  "Control" = "Control"
+)
+
+psq_obj_ref <- subset_samples(psq_obj_ref, !Location %in% c("Negative", "Blank", "Mock-communityA", "Mock-communityB"))
+psq_obj_ref <- prune_samples(sample_sums(psq_obj_ref) > 0, psq_obj_ref)
+
+## Remove taxa which are only appearing in one sample (experiments were run in triplicate).
+psq_obj_Hurleston <- subset_samples(psq_obj_ref, Location == "Hurleston")
+
+## Remove taxa which are only appearing in one sample (experiments were run in triplicate).
+psq_obj_Hurleston_Clean <- prune_taxa(taxa_sums(psq_obj_Hurleston) > 0, psq_obj_Hurleston)
+
+sample_data(psq_obj_Hurleston_Clean)$Sample.details <- as.character(sample_data(psq_obj_Hurleston_Clean)$Sample.details)
+
+
+sample_data(psq_obj_Hurleston_Clean)$Sample.details <- trimws(sample_data(psq_obj_Hurleston_Clean)$Sample.details)
+
+sample_data(psq_obj_Hurleston_Clean)$Sample.details <- recode(
+  sample_data(psq_obj_Hurleston_Clean)$Sample.details,
+  "RGF1.Backwash" = "Backwash",
+  "RGF.Water" = "Backwash-Water"
+)
+
+sample_data(psq_obj_Hurleston_Clean)$Sample.details <- as.character(sample_data(psq_obj_Hurleston_Clean)$Sample.details)
+sample_data(psq_obj_Hurleston_Clean)$Sample.details <- factor(
+  sample_data(psq_obj_Hurleston_Clean)$Sample.details,
+  levels = c(
+    "RAW-Water",
+    "CLR-Water",
+    "DAF-Sludge",
+    "RGF",
+    "Backwash-Water",
+    "Backwash",
+    "Control"
+  )
+)
+
+## Removing Control Groups
+yes_vals <- c("Y", "y", "Yes", "yes", "negative", "neg", "true")
+sample_ctrl <- "num"
+
+psq_obj_Hurleston_Clean <- subset_samples(psq_obj_Hurleston_Clean, num != "Y")
+table(sample_data(psq_obj_Hurleston_Clean)[[sample_ctrl]])
+
+sample_data(psq_obj_Hurleston_Clean)$Sequencing.depth <- sample_sums(psq_obj_Hurleston_Clean)
+sample_data(psq_obj_ref)$Sequencing.depth <- sample_sums(psq_obj_ref)
+```
+
+```{r}
+
+location_palette <- c(
+  "WTW1" = "#1b9e07",
+  "WTW2" = "#d95f02",
+  "WTW3" = "#7570b3",
+  "WTW4" = "#e7298a",
+  "WTW5" = "brown",
+  "WTW6" = "#e6ab02",
+  "WTW7" = "#a6761d",
+  "WTW8" = "#666666",
+  "WTW9" = "#66CCEE",
+  "Hurleston" = "#004488"
+)
+
+group_palette <- c(
+    "RAW-Water"      = "#1b9e77",
+    "CLR-Water"      = "#d95f02",
+    "DAF-Sludge"     = "#7570b3",
+    "RGF"            = "#e7298a",
+    "Backwash-Water" = "#e6ab02",
+    "Backwash"       = "#1f78b4",
+    "Control"        = "#666666"
+)
+```
+
+
+
+################################################################################
+#                                                                              #
+#       psq_obj_ref              : Full DCWW & Hurleston Dataset, clean        #
+#       psq_obj_Hurleston_Clean  : Subset Hurleston Data, clean                #
+#                                                                              #
+################################################################################
+
+
+################################################################################
+
+
+################################################################################
+#                                                                              #
+#                             **ALPHA DIVERSITY**                              #
+#                                                                              #
+################################################################################
+
+**(1.) ALPHA RAREFRACTION CURVE**
+
+```{r}
+
+# Define depths
+lib_sizes <- sample_sums(psq_obj_Hurleston_Clean)
+min_lib   <- min(lib_sizes)
+max_lib   <- max(lib_sizes)
+
+# Start with your candidate depths
+depths <- seq(1, max_lib, by = 1000)
+sample_var <- "SampleID"
+
+# Initialize list
+richness_list <- list()
+
+for (d in depths) {
+  set.seed(2006576)
+  rare_dat <- rarefy_even_depth(psq_obj_Hurleston_Clean, sample.size = d, rngseed = 2006576, verbose = FALSE, replace = FALSE)
+
+  richness <- estimate_richness(rare_dat, measures = "Observed")
+  richness$SampleID <- rownames(richness)
+  richness$Depth <- d
+  richness_list[[as.character(d)]] <- richness
+}
+
+# Combine results
+rare_df <- bind_rows(richness_list)
+
+# Add metadata
+metadata <- data.frame(sample_data(psq_obj_Hurleston_Clean))
+metadata$SampleID <- rownames(metadata)
+rare_df <- left_join(rare_df, metadata, by = "SampleID")
+
+# Summarize mean & SE per group
+summary_df <- rare_df %>%
+  group_by(Depth, !!sym(sample_var)) %>%
+  mutate(
+    Richness_mean = mean(Observed, na.rm = TRUE),
+    Richness_se   = sd(Observed, na.rm = TRUE) / sqrt(n())
+  ) %>%
+  ungroup()
+```
+**(2.) Plotting Alpha Rarefraction Curve**
+
+```{r}
+
+Rare.plot <- ggplot(summary_df, aes(x = Depth, y = Richness_mean, group = SampleID, color = Sample.details)) +
+  geom_line(linewidth = 1) +
+  scale_color_discrete(name = "Sample") +
+  scale_x_continuous(breaks = seq(0, 100000, by = 5000)) +
+  labs(x = "Sequencing Depth (n)", y = "Mean Observed ASVs (n)") +
+  theme_bw()
+
+# ggsave(
+#   "C:/Users/Danie/OneDrive - Cardiff University/004 - Cardiff University - Senior Research Technician/UnitedUtilities/000 - Reports/Code Repository/Alpha_Rarefraction.svg",
+#   Rare.plot,
+#   height = 5,
+#   width = 10
+# )
+
+filename <- paste0(output_directory,"rarefraction_curve_Hurleston.svg")
+ggsave(filename, Rare.plot, height = 5, width = 10)
+```
+
+
+
+
+**(3.) Calculating Alpha Diversity Distances**
+
+```{r}
+############################################################
+# 0. USER SETTINGS
+############################################################
+
+group      <- "Sample.details"   # column used for grouping
+ps11       <- psq_obj_Hurleston_Clean       # your phyloseq object
+
+
+############################################################
+# 1. PREPARE SAMPLE DATA
+############################################################
+
+# Extract sample metadata
+mapping <- phyloseq::sample_data(ps11)
+
+# Make sure all taxa have some non-zero counts
+ps11 <- phyloseq::filter_taxa(ps11, function(x) sum(x) > 0, prune = TRUE)
+
+# Rename the grouping column for clarity
+colnames(mapping) <- gsub(group, "Comparative_Group", colnames(mapping))
+
+# Create final grouping variable
+mapping$Group <- as.factor(mapping$Comparative_Group)
+
+
+
+############################################################
+# 2. EXTRACT OTU TABLE
+############################################################
+
+# Convert OTU table into a standard count matrix (samples x taxa)
+count <- as.data.frame(t(ranacapa::vegan_otu(ps11)))
+
+# Transpose back for vegan functions that expect taxa as columns
+x <- t(count)
+
+
+
+############################################################
+# 3. COMPUTE ALPHA DIVERSITY METRICS
+############################################################
+
+# Shannon diversity
+Shannon <- vegan::diversity(x, index = "shannon")
+
+# Inverse Simpson
+Inv_Simpson <- vegan::diversity(x, index = "invsimpson")
+
+# Species richness (observed)
+Richness <- vegan::specnumber(x)
+
+# Prevalence (alternative richness measure)
+S2 <- rowSums(x > 0)
+
+# Pielou's evenness
+Pielou_evenness <- Shannon / log(Richness)
+
+# Simpson evenness
+Simpson_evenness <- Inv_Simpson / Richness
+
+# Chao1, ACE, and richness from estimateR
+est <- vegan::estimateR(x)
+ACE   <- est["S.ACE", ]
+
+# Combine all metrics into a single table
+report <- cbind(
+  Shannon,
+  Inv_Simpson,
+  Pielou_evenness,
+  Simpson_evenness,
+  Richness,
+  ACE
+)
+
+
+
+############################################################
+# 4. MERGE DIVERSITY METRICS WITH SAMPLE METADATA
+############################################################
+
+alp <- merge(mapping, report, by = "row.names", all = FALSE)
+
+# Store complete alpha-diversity table
+alpha_table <- alp
+
+
+
+############################################################
+# 5. PREPARE DATA FOR STATISTICAL TESTING
+############################################################
+
+# Select metrics to test
+metrics_to_test <- c(
+  "Shannon", "Inv_Simpson", "Pielou_evenness",
+  "Simpson_evenness", "Richness", "ACE"
+)
+
+
+data_for_test <- cbind(
+  data.frame(
+    ID = seq_len(nrow(alpha_table)),
+    Group = alpha_table$Group,
+    SampleID = alpha_table$Row.names,
+    Sequencing.depth = alpha_table$Sequencing.depth
+  ),
+  alpha_table[, metrics_to_test]
+)
+
+```
+
+## Linear Model for Distance vs Sequencing Depth
+
+**(4.) Plotting Distance Matrices**
+
+
+```{r, fig.width=10, fig.height=10}
+
+# Create a list containing distances generated
+alpha_list <- c("Shannon",
+                "Inv_Simpson",
+                "Pielou_evenness",
+                "Simpson_evenness",
+                "Richness")
+
+# Standard depth for predictions
+str.depth <- median(data_for_test$Sequencing.depth)
+
+# Empty plot list to populate
+plot_list <- list()
+
+# Loop to predict/standardise distance values by sequencing depth
+for (metric in alpha_list) {
+  # Build formula dynamically: e.g. Shannon ~ Group + Sequencing.depth
+  f <- as.formula(paste(metric, "~ Group + Sequencing.depth"))
+  
+  # Fit model
+  fit <- lm(data = data_for_test, formula = f)
+  
+  # Name for standardised metric column
+  newcol <- paste0("str.", metric)
+  
+  # Predict standardised values
+  data_for_test[[newcol]] <- predict(fit,
+                                     newdata = data.frame(Group = data_for_test$Group, Sequencing.depth = str.depth))
+  
+}
+
+# Function to look all distances to generate alpha diversity plots with statistics
+make_alpha_plot <- function(metric, data) {
+  
+  # Apply "str." to recognise new columns 
+  str_metric <- paste0("str.", metric)
+  
+  # Generate same model as above for emmeans
+  m <- lm(as.formula(paste(metric, "~ Group + Sequencing.depth")), data = data)
+  
+  # Apply pairwise emmeans to the model and compare by 'Group'
+  pw_test <- emmeans::contrast(emmeans::emmeans(m, specs = "Group"),
+                               method = "pairwise",
+                               adjust = "BH")
+  
+  # Extract key information from the emmeans output to be able to plot
+  pw_df <- as.data.frame(pw_test) %>%
+    mutate(
+      group1 = sub("^(.*) - (.*)$", "\\1", contrast),
+      group2 = sub("^(.*) - (.*)$", "\\2", contrast),
+      
+      # remove parentheses from group names
+      group1 = gsub("[()]", "", group1),
+      group2 = gsub("[()]", "", group2),
+      
+      p = p.value,
+      p.signif = case_when(
+        p <= 0.0001 ~ "****",
+        p <= 0.001  ~ "***",
+        p <= 0.01   ~ "**",
+        p <= 0.05   ~ "*",
+        TRUE ~ "ns"
+      )
+    )
+  
+  # Filter significance table to remove any non-significance to prevent plotting
+  pw_sig <- pw_df %>% filter(p.signif != "ns")
+  
+  # Scalling feature to apply space for significance bars if any
+  base_max <- max(data[[str_metric]], na.rm = TRUE)
+  plot_scale <- base_max * 0.15
+  
+  if (nrow(pw_sig) > 0) {
+    pw_sig$y.position <- base_max + seq(plot_scale, by = plot_scale, length.out = nrow(pw_sig))
+  }
+  
+  # ggplot of alpha distances, with expansions for significance bars where needed
+  p <- ggplot(data, aes(x = Group, y = .data[[str_metric]])) +
+    geom_boxplot(aes(fill = Group),
+                 alpha = 0.8,
+                 outlier.shape = NA) +
+    geom_point(aes(color = Group), size = 3, alpha = 0.8) +
+    labs(x = "", y = metric) +
+    theme_bw() +
+    scale_fill_manual(values = group_palette) +
+    scale_color_manual(values = group_palette) +
+    scale_y_continuous(expand = expansion(mult = c(0.1, 0.15))) +
+    theme(
+      axis.text.x = element_text(angle = 90, vjust = 0.5),
+      plot.title = element_text(size = 12, face = "bold")
+    )
+  
+  if (nrow(pw_sig) > 0) {
+    p <- p + ggpubr::stat_pvalue_manual(pw_sig, label = "p.signif", tip.length = 0.01)
+  }
+  
+  return(p)
+}
+
+# Apply the function to the distances within the data
+plots <- lapply(alpha_list, make_alpha_plot, data = data_for_test)
+
+# Combine the 5x plots into one figure using ggarrange
+combined_plot <- ggpubr::ggarrange(
+  plotlist = plots,
+  ncol = 3,
+  nrow = 2,
+  common.legend = TRUE,
+  legend = "right"
+)
+
+# plot the figure
+combined_plot
+
+
+# ggsave("C:/Users/Dan/OneDrive - Cardiff University/004 - Cardiff University - Senior Research Technician/UnitedUtilities/000 - Reports/Code Repository/Alpha_diversity.svg", 
+#        combined_plot, 
+#        height = 10, width = 10)
+
+filename <- paste0(output_directory,"alpha_diversity_Hurleston.svg")
+ggsave(filename, combined_plot, height = 10, width = 10)
+
+```
+
+################################################################################
+#                                                                              #
+#                              **BETA  DIVERSITY**                             #
+#                                                                              #
+################################################################################
+
+**(1.) Hurleston Data**
+
+```{r}
+
+psq_obj_Hurleston_Clean <- tax_glom(psq_obj_Hurleston_Clean, taxrank = "Family")
+psq_obj_Hurleston_Clean_rel <- transform_sample_counts(psq_obj_Hurleston_Clean, function(x) x / sum(x))
+psq_obj_Hurleston_Clean_rel <- prune_taxa(taxa_sums(psq_obj_Hurleston_Clean_rel) > 0, psq_obj_Hurleston_Clean_rel)
+
+Hurleston_beta <- plotbeta(psq_obj_Hurleston_Clean_rel, group = "Sample.details") + 
+  labs(colour = "Sample Stage") +
+  scale_colour_manual(values = group_palette)
+
+filename <- paste0(output_directory,"beta_diversity_Hurleston.svg")
+ggsave(filename, Hurleston_beta, height = 5, width = 7.5)
+```
+
+```{r, fig.height=10, fig.width=10}
+ord <- ordinate(psq_obj_Hurleston_Clean_rel,
+                method = "PCoA",
+                distance = "bray")
+
+
+eig <- ord$values$Eigenvalues
+var_exp <- eig / sum(eig) * 100
+
+
+ord_df <- as.data.frame(ord$vectors[, 1:3])
+ord_df$Sample.details <- sample_data(psq_obj_Hurleston_Clean_rel)$Sample.details
+
+
+axis_labels <- c(
+  paste0("PCoA 1 (", round(var_exp[1], 1), "%)"),
+  paste0("PCoA 2 (", round(var_exp[2], 1), "%)"),
+  paste0("PCoA 3 (", round(var_exp[3], 1), "%)")
+)
+
+plot_ly(
+  ord_df,
+  x = ~Axis.1,
+  y = ~Axis.2,
+  z = ~Axis.3,
+  color = ~Sample.details,
+  colors = group_palette,
+  type = "scatter3d",
+  mode = "markers",
+  marker = list(size = 5)
+) %>%
+  layout(
+    scene = list(
+      xaxis = list(title = axis_labels[1]),
+      yaxis = list(title = axis_labels[2]),
+      zaxis = list(title = axis_labels[3])
+    ),
+    legend = list(title = list(text = "Sample Stage"))
+  )
+
+```
+
+
+**(2.) PERMANOVA: Statistically comparing microbial community similarities**
+
+```{r}
+
+bact <- data.frame(otu_table(psq_obj_Hurleston_Clean_rel))
+metadata <- data.frame(sample_data(psq_obj_Hurleston_Clean_rel))
+
+## PERMANOVA to determine if there may be a sigdifference between groups and seq depth
+dist.bray <- phyloseq::distance(psq_obj_Hurleston_Clean_rel, method = "bray")
+ps.adonis <- adonis2(dist.bray ~ Sample.details + Sequencing.depth, data = metadata, perm=9999)
+
+## Statistical approach to compare in-sample dispersion
+ps.disper <- betadisper(dist.bray, metadata$Sample.details)
+permutest(ps.disper, pair=TRUE)
+
+## Pairwise PERMANOVA to find true differences between groups
+pairwise.adonis(dist.bray, factors = metadata$Sample.details, p.adjust.m = "BH")
+
+```
+
+**(3.) Hurleston comparison to DCWW**
+
+```{r}
+
+# (1.) IDENTIFYING TAXA SHARED BETWEEN THE DCWW AND HURLESTON AT THE FAMILY LEVEL
+psq_family <- tax_glom(psq_obj_ref, taxrank = "Family")                 # Reduce object to Family Level
+psq_family_RGF <- subset_samples(psq_family, Sample.details == "RGF")
+psq_family_DAF <- subset_samples(psq_family, Sample.details == "DAF-Sludge")
+psq_family_RAW <- subset_samples(psq_family, Sample.details == "RAW-Water")
+
+# (2.) EXTRACT HURLESTON DATA FROM THE LARGER OBJECT
+psq_hurleston <- subset_samples(psq_family_RGF, anon_location == "Hurleston")
+psq_hurleston <- prune_taxa(taxa_sums(psq_hurleston) > 0, psq_hurleston)
+
+# (3.) EXTRACT DATA WHICH ISNT HURLESTON
+psq_dcww <- subset_samples(psq_family_RGF, anon_location != "Hurleston")
+psq_dcww <- prune_taxa(taxa_sums(psq_dcww) > 0, psq_dcww)
+
+# (4.) COMPARE THE TAXA ID AND FINE WHICH ARE SHARED
+shared_families <- intersect(
+  taxa_names(psq_hurleston),
+  taxa_names(psq_dcww)
+)
+
+# (5.) COLLAPSE PHYLOSEQ OBJECT BY SHARED TAXA
+psq_family_shared <- prune_taxa(shared_families, psq_family_RGF)
+psq_family_shared <- prune_taxa(taxa_sums(psq_family_shared) > 0, psq_family_shared)
+psq_family_shared
+
+psq_obj_ref_rel <- transform_sample_counts(psq_family_shared, function(x) x / sum(x))
+```
+
+```{r}
+plotbeta(psq_obj_ref_rel, group="anon_location") + 
+  stat_ellipse(level = 0.95) +
+  labs(colour = "Water Works") +
+  scale_colour_manual(values = location_palette)
+```
+
+
+**(4.) Statistically compare RGF of different locations**
+
+```{r}
+bact <- data.frame(otu_table(psq_obj_ref_rel))
+metadata <- data.frame(sample_data(psq_obj_ref_rel))
+
+## PERMANOVA to determine if there may be a sigdifference between groups and seq depth
+dist.bray <- phyloseq::distance(psq_obj_ref_rel, method = "bray")
+ps.adonis <- adonis2(dist.bray ~ anon_location, data = metadata, perm=9999)
+
+## Statistical approach to compare in-sample dispersion
+ps.disper <- betadisper(dist.bray, metadata$anon_location)
+permutest(ps.disper, pair=TRUE)
+
+## Pairwise PERMANOVA to find true differences between groups
+pairwise.adonis(dist.bray, factors = metadata$anon_location, p.adjust.m = "BH")
+```
+
+################################################################################
+#                                                                              #
+#                           **TAXONOMIC BAR PLOTS**                            #
+#                                                                              #
+################################################################################
+
+**(1.) Hurleston**
+
+```{r}
+Hurleston_bar <- plotbar(psq_obj_Hurleston_Clean_rel, group = "Sample.details", level = "Family", top = 30) + 
+  labs(y = "Relative Abundance", x = "Sample Stage", title = "RGF") +
+  theme(axis.text.x = element_text(size = 12))
+
+filename <- paste0(output_directory,"bar_plot_Hurleston_RGF.svg")
+ggsave(filename, Hurleston_bar, height = 10, width = 10)
+```
+
+
+
+**(1.) Bar plot of RGF for comparison at different locations**
+
+```{r fig.height=10, fig.width=10}
+psq_family_shared_RGF <- prune_taxa(shared_families, psq_family_RGF)
+psq_family_shared_RGF <- prune_taxa(taxa_sums(psq_family_shared_RGF) > 0, psq_family_shared_RGF)
+psq_family_shared_RGF
+
+psq_family_shared_RGF_rel <- transform_sample_counts(psq_family_shared_RGF, function(x) x / sum(x))
+
+
+RGF_bar <- plotbar(psq_family_shared_RGF_rel, group = "anon_location", level = "Family", top = 20) + 
+  labs(y = "Relative Abundance", x = "Water Treatment Works", title = "RGF") +
+  theme(axis.text.x = element_text(size = 12))
+
+filename <- paste0(output_directory,"bar_plot_DCWW_Hurleston_RGF.svg")
+ggsave(filename, RGF_bar, height = 10, width = 7.5)
+```
+
+```{r}
+RGF_beta <- plotbeta(psq_family_shared_RGF_rel, group="anon_location") + 
+  stat_ellipse(level = 0.95) +
+  labs(colour = "Water Works")+
+  scale_colour_manual(values = location_palette)
+
+filename <- paste0(output_directory,"beta_diversity_DCWW_Hurleston_RGF.svg")
+ggsave(filename, RGF_beta, height = 5, width = 7.5)
+```
+
+**(2.) Bar plot of DAF Sludge for comparison at different locations**
+
+```{r fig.height=10, fig.width=10}
+psq_family_shared_DAF <- prune_taxa(shared_families, psq_family_DAF)
+psq_family_shared_DAF <- prune_taxa(taxa_sums(psq_family_shared_DAF) > 0, psq_family_shared_DAF)
+psq_family_shared_DAF
+
+psq_family_shared_DAF_rel <- transform_sample_counts(psq_family_shared_DAF, function(x) x / sum(x))
+
+
+DAF_bar <- plotbar(psq_family_shared_DAF_rel, group = "anon_location", level = "Family", top = 20) + 
+  labs(y = "Relative Abundance", x = "Water Treatment Works", title = "DAF") +
+  theme(axis.text.x = element_text(size = 12))
+
+filename <- paste0(output_directory,"bar_plot_DCWW_Hurleston_DAF.svg")
+ggsave(filename, DAF_bar, height = 10, width = 7.5)
+```
+
+```{r}
+DAF_beta <- plotbeta(psq_family_shared_DAF_rel, group="anon_location") + 
+  stat_ellipse(level = 0.95) +
+  labs(colour = "Water Works") +
+  scale_colour_manual(values = location_palette)
+
+filename <- paste0(output_directory,"beta_diversity_DCWW_Hurleston_DAF.svg")
+ggsave(filename, DAF_beta, height = 5, width = 7.5) 
+```
+
+
+**(3.) Bar plot of Raw Water for comparison at different locations**
+
+```{r fig.height=10, fig.width=10}
+psq_family_shared_RAW <- prune_taxa(shared_families, psq_family_RAW)
+psq_family_shared_RAW <- prune_taxa(taxa_sums(psq_family_shared_RAW) > 0, psq_family_shared_RAW)
+psq_family_shared_RAW
+
+psq_family_shared_RAW_rel <- transform_sample_counts(psq_family_shared_RAW, function(x) x / sum(x))
+
+
+RAW_bar <- plotbar(psq_family_shared_RAW_rel, group = "anon_location", level = "Phylum", top = 20) + 
+  labs(y = "Relative Abundance", x = "Water Treatment Works", title = "Raw Water") +
+  theme(axis.text.x = element_text(size = 12))
+
+filename <- paste0(output_directory,"bar_plot_DCWW_Hurleston_RAW.svg")
+ggsave(filename, RAW_bar, height = 10, width = 7.5)
+```
+
+```{r}
+RAW_beta <- plotbeta(psq_family_shared_RAW_rel, group="anon_location") + 
+  stat_ellipse(level = 0.95) +
+  labs(colour = "Water Works") +
+  scale_colour_manual(values = location_palette)
+
+filename <- paste0(output_directory,"beta_diversity_DCWW_Hurleston_RAW.svg")
+ggsave(filename, RAW_beta, height = 5, width = 7.5)
+```
+
+################################################################################
+#                                                                              #
+#                           **TAXONOMIC DOT PLOTS**                            #
+#                                                                              #
+################################################################################
+
+**(1.) Overview of Hurleston**
+
+```{r, fig.height=10, fig.width=20}
+psq_RGF <-   subset_samples(psq_obj_Hurleston_Clean, Sample.details %in% c("RGF", "Backwash-Water", "Backwash"))
+psq_RGF <- tax_glom(psq_RGF, taxrank = "Family")
+psq_RGF <- prune_taxa(taxa_sums(psq_RGF) > 0, psq_RGF)
+psq_RGF_rel <- transform_sample_counts(psq_RGF, function(x) x / sum(x))
+
+
+psq_RGF_rel_filt <- prune_taxa(
+  apply(otu_table(psq_RGF_rel), 1, max) >= 0.01,
+  psq_RGF_rel
+)
+
+
+df <- psmelt(psq_RGF_rel_filt)
+
+top20_families <- df %>%
+  group_by(Family) %>%
+  summarise(total_abundance = sum(Abundance, na.rm = TRUE)) %>%
+  arrange(desc(total_abundance)) %>%
+  slice_head(n = 20) %>%
+  pull(Family)
+
+df_top20 <- df %>% filter(Family %in% top20_families)
+
+df_top20$Phylum <- factor(df_top20$Phylum,
+                         levels = unique(df_top20$Phylum))
+
+df_top20$Family <- factor(df_top20$Family, levels = sort(top20_families))
+
+
+phylum_blocks <- df %>%
+  group_by(Phylum) %>%
+  summarise(
+    y_min = min(as.numeric(Family)),
+    y_max = max(as.numeric(Family))
+  )
+
+df_top20$Sample <- factor(df_top20$Sample)
+
+df_top20
+
+df_top20$batch.name <- recode(
+  df_top20$batch.name,
+    "RGF1B_1L_Matrix" = "Backwash Matrix",
+    "RGF1B_Matrix" = "Backwash Matrix", 
+  "RGF1B_Water" = "Backwash Water", 
+    "RGF1" = "RGF1",
+    "RGF2" = "RGF2",
+    "RGF3" = "RGF3",
+    "RGF4" = "RGF4",
+    "RGF5" = "RGF5",
+    "RGF6" = "RGF6",
+    "RGF7" = "RGF7"
+  )
+
+  Dot_Hurleston <- ggplot(
+  df_top20,
+  aes(
+    x = Sample,
+    y = Family,
+    size = Abundance,
+    color = Family
+  )
+) +
+  geom_point(alpha = 0.8) +
+  theme_bw() +
+  xlab("") +
+  ylab("Family") +
+
+  ggh4x::facet_nested(
+    rows = vars(Phylum, Family),
+    cols = vars(Sample.details, batch.name),
+    scales = "free",
+    space = "free",
+    switch = "both"
+  ) +
+
+  scale_size_continuous(range = c(0, 12)) +
+
+  scale_x_discrete(
+    labels = setNames(df_top20$batch.name, df_top20$Sample)
+  ) +
+
+  guides(
+    color = "none",
+    size  = guide_legend(
+      title = "Relative\nAbundance",
+      override.aes = list(color = "grey30")
+    )
+  ) +
+
+  theme(
+    axis.text.x = element_text(angle = 90, vjust = 0.5),
+    strip.text = element_text(size = 10, face = "bold", lineheight = 0.9),
+    strip.text.y.left = element_text(angle = 0),
+    strip.background = element_rect(
+      colour = "grey30",
+      fill = alpha("cornflowerblue", 0.5)
+    ),
+    axis.title.y = element_blank(),
+    axis.text.y = element_blank(),
+    axis.ticks.y = element_blank(),
+    legend.position = "right",
+    plot.title.position = "plot"
+  ) +
+  ggtitle("         Phylum                   Family")
+
+
+filename <- paste0(output_directory,"dot_plot_Hurleston.svg")
+ggsave(filename, Dot_Hurleston, height = 15, width = 15)
+
+```
+
+################################################################################
+#                                                                              #
+#            **RANDOM FOREST FOR PREDICTION T&O BIOLOGICAL REMOVAL**           #
+#                                                                              #
+################################################################################
+
+**(1.) Comparative table of shared communities at each taxonomic level**
+
+```{r}
+
+psq_obj_ref_rel <- transform_sample_counts(psq_obj_ref, function(x) x / sum(x))
+
+# Define the taxonomic ranks you want
+tax_levels <- c("Phylum", "Class", "Order", "Family", "Genus", "ASV")
+
+# Empty list to save results
+results <- list()
+
+for (rank in tax_levels) {
+
+  # ---- (1) Agglomerate or keep ASV level ----
+  if (rank == "ASV") {
+    ps_rank <- psq_obj_ref_rel
+  } else {
+    ps_rank <- tax_glom(psq_obj_ref_rel, taxrank = rank)
+  }
+  
+  # ---- (1.5) Subset for total amount ----
+  taxa_all <- taxa_names(ps_rank)
+  
+  # ---- (2) Subset Hurleston ----
+  ps_hurleston <- subset_samples(ps_rank, Location == "Hurleston")
+  ps_hurleston <- prune_taxa(taxa_sums(ps_hurleston) > 0, ps_hurleston)
+  taxa_h <- taxa_names(ps_hurleston)
+  
+  # ---- (3) Subset DCWW (non-Hurleston) ----
+  ps_dcww <- subset_samples(ps_rank, Location != "Hurleston")
+  ps_dcww <- prune_taxa(taxa_sums(ps_dcww) > 0, ps_dcww)
+  taxa_d <- taxa_names(ps_dcww)
+  
+  # ---- (4) Calculate unique + shared ----
+  unique_h <- setdiff(taxa_h, taxa_d)
+  unique_d <- setdiff(taxa_d, taxa_h)
+  shared   <- intersect(taxa_h, taxa_d)
+  
+  # ---- (5) Save results ----
+  results[[rank]] <- data.frame(
+    Level = rank,
+    Total = length(taxa_all),
+    Hurleston = length(unique_h),
+    DCWW = length(unique_d),
+    Shared = length(shared)
+  )
+}
+
+# Bind into a single dataframe
+final_results <- bind_rows(results)
+final_results
+```
+
+```{r}
+# (1.) IDENTIFYING TAXA SHARED BETWEEN THE DCWW AND HURLESTON AT THE FAMILY LEVEL
+psq_family <- tax_glom(psq_obj_ref, taxrank = "Family")      # Reduce object to Family Level
+
+# (3.) EXTRACT DATA WHICH ISNT HURLESTON
+ps_dcww <- subset_samples(psq_family, !Location %in% c("Hurleston", "Cefni", "Glascoed", "Preseli"))
+ps_dcww <- subset_samples(ps_dcww, batch.name %in% c("oct_19", "dec_19"))
+ps_dcww <- subset_samples(ps_dcww, Sample.details == "RGF")
+ps_dcww <- prune_taxa(taxa_sums(ps_dcww) > 0, ps_dcww)
+
+```
+
+```{r}
+## Extract OTU Table from Phyloseq Object
+reference_bact_otu <- data.frame(t(otu_table(ps_dcww)))
+
+## Extract Metadata from Phyloseq Object
+metadata_ref       <- data.frame(sample_data(ps_dcww))
+```
+
+**NB: These optimisation plots may take some time to run depending on the size of the otu dataframe.**
+
+(1.)
+```{r}
+plot(randomForest(reference_bact_otu, y=metadata_ref$RGF.TO.removal, proximity = F, keep.forest = F, ntree=100000))
+```
+(2.)
+* Replace ntree with an optimal value from the previous plot. 
+```{r}
+cv.treat<-rfcv(reference_bact_otu, metadata_ref$RGF.TO.removal, cv.fold = 100, ntree = 5000)
+plot(cv.treat$error.cv~cv.treat$n.var, type = "S", xlab = "No. variables", ylab = "Error rate", ylim = c(0,1), main = "RFCV")
+```
+
+### Running the RF with optimal settings. 
+
+```{r}
+
+set.seed(2006576)
+#Run a random forest classification for surface
+TO_RF<-randomForest(reference_bact_otu, y=metadata_ref$RGF.TO.removal, importance = T, proximity = T, mtry = 30, ntree=5000)
+
+#Look at how accurately the classification worked
+TO_RF$confusion
+```
+
+```{r, fig.height=5, fig.width=5}
+set.seed(08121001)
+
+## Assigning Colours
+# Ellipses
+ellipse_cols <- c(
+  "NO"  = "brown3",
+  "YES" = "cornflowerblue",
+  "PREDICTION" = "green4"
+)
+
+ellipse_cols <- ellipse_cols[levels(metadata_ref$RGF.TO.removal)]
+
+# Points as Location
+# Factor of locations
+loc_factor <- as.factor(metadata_ref$Location)
+# Colour palette (distinct colours for each location)
+location_cols <- brewer.pal(n = length(levels(loc_factor)), name = "Dark2")
+# Create named palette
+names(location_cols) <- levels(loc_factor)
+
+## Shape as Media
+shape_values <- c(
+  "Anthracite" = 17,
+  "GAC" = 15,
+  "Sand" = 16
+)
+
+
+
+shape_factor <- as.factor(metadata_ref$RGF.media)
+names(shape_values) <- levels(shape_factor)
+
+
+#Do an ordination plot based on the random forest
+RFplot.surface<-MDSplot(TO_RF, metadata_ref$RGF.TO.removal, xlim=c(-1,1), ylim=c(-1,1))
+
+#svg("C:/Users/Danie/OneDrive - Cardiff University/004 - Cardiff University - Senior Research Technician/Add to Github/16S-Microbiome-Analysis/random_forest_MDS.svg")
+plot(
+  RFplot.surface$points,
+  col = location_cols[loc_factor],     # <-- COLOUR BY LOCATION
+  pch = shape_values[shape_factor],
+  xlab = "MDS1",
+  ylab = "MDS2",
+  xlim = c(-1, 1),
+  ylim = c(-1, 1)
+)
+
+
+#Add 95% confidence intervals
+col = ellipse_cols[metadata_ref$RGF.TO.removal]
+
+ordiellipse(RFplot.surface, metadata_ref$RGF.TO.removal,  col = ellipse_cols, conf=0.95,lwd=3,lty=3,draw="lines")
+
+#Add a legend
+# Ellipse Legend
+legend("bottomleft",  c(levels(metadata_ref$RGF.TO.removal)),  col = ellipse_cols, pch=c(20), bty="n", cex=1)
+
+# Location Legend
+legend("bottomright", legend = names(location_cols), col = location_cols, pch = 19, bty = "n", cex = 1)
+
+# Shape Legend
+legend("topright", legend = names(shape_values), pch = shape_values, bty = "n", cex = 1)
+
+#dev.off()
+```
+
