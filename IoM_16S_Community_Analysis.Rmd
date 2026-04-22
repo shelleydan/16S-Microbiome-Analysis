@@ -235,6 +235,17 @@ sample_data(physeq_filtered)$types <- recode(
   "shell_biofilm_ppt" = "Precipitate"
 )
 
+sample_data(physeq_filtered)$matrix_type <- as.character(sample_data(physeq_filtered)$matrix_type)
+sample_data(physeq_filtered)$matrix_type <- factor(
+  sample_data(physeq_filtered)$matrix_type,
+  levels = c(
+    "Bulk",
+    "Matrix",
+    "Precipertate",
+    "Other"
+  )
+)
+
 ## Removing Control Groups
 physeq_filtered <- subset_samples(physeq_filtered, control != "Y")
 ```
@@ -333,7 +344,8 @@ Rare.plot <- ggplot(summary_df, aes(x = Depth, y = Richness_mean, group = Sample
   scale_color_manual(values = group_colours) +
   scale_x_continuous(breaks = seq(0, 100000, by = 5000)) +
   labs(x = "Sequencing Depth (n)", y = "Mean Observed ASVs (n)", color = "Stage") +
-  theme_bw()
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 35, vjust = 1, hjust=1))
 
 filename <- paste0(output_directory,"rarefraction_curve_Hurleston.svg")
 ggsave(filename, Rare.plot, height = 5, width = 10)
@@ -342,7 +354,6 @@ ggsave(filename, Rare.plot, height = 5, width = 10)
 ```{r}
 physeq_filtered <- rarefy_even_depth(physeq_filtered, 20000, rngseed = 202020)
 ```
-
 
 
 **(3.) Calculating Alpha Diversity Distances**
@@ -432,16 +443,15 @@ data_for_test <- cbind(
 **(4.) Plotting Distance Matrices**
 
 ```{r fig.height=7, fig.width=7}
-data_for_test
+####### Kruskal Wallis Test for Shannon Differences ####### 
+kruskal.test(Shannon ~ Group, data = data_for_test)
 
-kruskal.test(Richness ~ Group, data = data_for_test)
-
+####### Pairwise Wilcox Test ####### 
 sigdf <- pairwise.wilcox.test(
   x = data_for_test$Shannon,
   g = data_for_test$Group,
   p.adjust.method = "BH"
 )
-
 
 pw_df <- as.data.frame(as.table(sigdf$p.value)) %>%
   rename(
@@ -450,7 +460,6 @@ pw_df <- as.data.frame(as.table(sigdf$p.value)) %>%
     p = Freq
   ) %>%
   filter(!is.na(p))
-
 
 pw_df <- pw_df %>%
   mutate(
@@ -494,7 +503,7 @@ alpha_plot <- ggplot(data_for_test, aes(x = Group, y = Shannon, fill = Group)) +
   )
 
 filename <- paste0(output_directory,"Alpha_Shannon.svg")
-ggsave(filename, alpha_plot, height = 5, width = 7.5)
+ggsave(filename, alpha_plot, height = 5, width = 7)
 
 
 ```
@@ -510,214 +519,53 @@ ggsave(filename, alpha_plot, height = 5, width = 7.5)
 
 ```{r}
 psq_obj_ref_rel <- normalize(physeq_filtered, method = "relative")
-
 psq_obj_ref_rel <- prune_taxa(taxa_sums(psq_obj_ref_rel) > 0, psq_obj_ref_rel)
 
 IoM_beta <- plotbeta(psq_obj_ref_rel, group = "type", shape = "matrix_type") + 
   labs(colour = "",
        shape = "") +
-  stat_ellipse(aes(group = type), lty = "dashed") +
   scale_shape_manual(values = types_shape) +
   scale_colour_manual(values = group_colours)
 
-filename <- paste0(output_directory,"beta_diversity_Hurleston.svg")
+filename <- paste0(output_directory,"beta_diversity_IoM.svg")
 ggsave(filename, IoM_beta, height = 5, width = 7.5)
-```
 
-**(2.) PERMANOVA: Statistically comparing microbial community similarities**
+```
+**Beta Diversity - Statistics**
 
 ```{r}
+IoM_BC_Dist <- distance(psq_obj_ref_rel, method ="bray")
 
-ps_tr <- microbiome::transform(psq_obj_ref_rel, "clr")
-ps_dist_matrix <- phyloseq::distance(psq_obj_ref_rel, method ="bray")
+bc_dist_disp <- betadisper(IoM_BC_Dist, group = sample_data(psq_obj_ref_rel)$type)
+anova(bc_dist_disp)
 
-sample_data(ps_tr)$batch.name <- as.character(sample_data(ps_tr)$type)
-ps_tr <- subset_samples(ps_tr, type !="NA")
+########## Post Hoc TukeyHSD on 1/4 root Bray ############
 
-vegan::adonis2(ps_dist_matrix ~ phyloseq::sample_data(ps_tr)$type)
-pairwise.adonis(ps_dist_matrix, phyloseq::sample_data(ps_tr)$type)
-permutest(betadisper(ps_dist_matrix, group = phyloseq::sample_data(ps_tr)$type), pairwise = TRUE)
+TukeyHSD(bc_dist_disp)
 
-```
+########## PERMANOVA ############
 
-################################################################################
-#                                                                              #
-#                           **TAXONOMIC BAR PLOTS**                            #
-#                                                                              #
-################################################################################
+vegan::adonis2(IoM_BC_Dist ~ phyloseq::sample_data(psq_obj_ref_rel)$type)
 
-**(1.) IoM**
+########## Pairwise PERMANOVA ########## 
+IoM_BC_Dist_SL_psq <- subset_samples(physeq_filtered, type %in% c("Shell","Limestone"))
+IoM_BC_Dist_SL <- distance(IoM_BC_Dist_SL_psq, method ="bray")
 
-```{r, fig.height=7.5, fig.width=7.5}
+pairwise.adonis(IoM_BC_Dist, phyloseq::sample_data(psq_obj_ref_rel)$type)
 
-plotbar(psq_obj_ref_rel, level = "Family", group = "type", top = 20, fontsize.x = 7.5, fontsize.y = 7.5) +
-  labs(y = "Relative Abundance", x = "Sample")
+pairwise.adonis(IoM_BC_Dist ~ subset(sample_data(psq_obj_ref_rel), type %in% c("Shell","Limestone")))
 
 ```
 
+***Mn(II) Oxidisers***
 
 
-################################################################################
-#                                                                              #
-#                           **TAXONOMIC DOT PLOTS**                            #
-#                                                                              #
-################################################################################
 
-**(1.) Overview of Hurleston**
-
-```{r, fig.height=10, fig.width=7.5}
-physeq_filtered_gen <- tax_glom(physeq_filtered, taxrank = "Genus")
-psq_obj_ref_rel <- normalize(physeq_filtered_gen, method = "relative")
-psq_obj_ref_rel <- prune_taxa(taxa_sums(psq_obj_ref_rel) > 0, psq_obj_ref_rel)
+***Fe(II) Oxidisers***
 
 
-df_psq_fam <- psmelt(psq_obj_ref_rel)
 
-genera <- c(
-  "Terrimonas",
-  "Stenotrophomonas",
-  "Sphingorhabdus",
-  "Sphingopyxis",
-  "Sphingomonas",
-  "Shewanella",
-  "Reyranella",
-  "Pseudonocardia",
-  "Pseudomonas",
-  "Pedobacter",
-  "Novosphingobium",
-  "Nocardia",
-  "Nitrospira",
-  "Mycobacterium",
-  "Microbacterium",
-  "Methylobacterium",
-  "Leptolyngbya",
-  "Hyphomicrobium",
-  "Flavobacterium",
-  "Duganella",
-  "Caulobacter",
-  "Brevundimonas",
-  "Brevibacterium",
-  "Bosea",
-  "Afipia"
-)
+***Nitrifying Bacteria***
 
 
-df_psq_fam_filtered <- df_psq_fam %>%
-  filter(Genus %in% genera)
-
-
-df_psq_fam_filtered <- df_psq_fam_filtered %>%
-  filter(Abundance > 0)
-
-
-mn_plot <-ggplot(
-  df_psq_fam_filtered,
-  aes(
-    x = Sample,
-    y = Genus,
-    size = Abundance,
-    color = Genus
-  )
-) +
-  geom_point(alpha = 0.8) +
-  facet_wrap(~ type, scales = "free_x") +
-  theme_bw() +
-  xlab("") +
-  ylab("Genus") +
-  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
-  
-filename <- paste0(output_directory,"Mn_Tax_plot.svg")
-ggsave(filename, mn_plot, height = 10, width = 7.5)
-
-######## Potential Nitrifying 
-df_psq_fam <- psmelt(psq_obj_ref_rel)
-
-taxa_keep <- c(
-  "Candidatus_Anammoximicrobium",
-  "Nitrosarchaeum",
-  "Nitrosomonadaceae",
-  "Nitrosomonas",
-  "Nitrosospira",
-  "Planctomycetota"
-)
-
-
-psq_subset <- subset_taxa(
-  psq_obj_ref_rel,
-  Genus %in% taxa_keep |
-  Family %in% taxa_keep |
-  Phylum %in% taxa_keep
-)
-
-df_limited <- psmelt(psq_subset)
-
-
-df_limited <- df_limited %>%
-  mutate(
-    taxa = case_when(
-      !is.na(Genus)  ~ Genus,
-      !is.na(Family) ~ Family,
-      !is.na(Phylum) ~ Phylum,
-      TRUE           ~ NA_character_
-    )
-  )
-
-df_limited <- df_limited %>%
-  filter(Abundance > 0)
-
-Nit_plot <-ggplot(
-  df_limited,
-  aes(
-    x = Sample,
-    y = Family,
-    size = Abundance,
-    color = Family
-  )
-) +
-  geom_point(alpha = 1) +
-  facet_wrap(~ type, scales = "free_x") +
-  theme_bw() +
-  xlab("") +
-  ylab("Genus") +
-  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
-
-############# Micritisation
-
-
-micritization_genera <- c(
-  "Mastigocoleus",
-  "Tessarococcus",
-  "Halomonas",
-  "Virgibacillus",
-  "Desulfovibrio",
-  "Desulfosarcina",
-  "Desulfococcus",
-  "Sporosarcina",
-  "Achromatium",
-  "Methylosinus"
-)
-
-df_psq_fam_filtered <- df_psq_fam %>%
-  filter(Genus %in% micritization_genera)
-
-
-df_psq_fam_filtered <- df_psq_fam_filtered %>%
-  filter(Abundance > 0)
-
-
-mit_plot <-ggplot(
-  df_psq_fam_filtered,
-  aes(
-    x = Sample,
-    y = Genus,
-    size = Abundance,
-    color = Genus
-  )
-) +
-  geom_point(alpha = 0.8) +
-  facet_wrap(~ type, scales = "free_x") +
-  theme_bw() +
-  xlab("") +
-  ylab("Genus") +
-  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
-```
+***Micritizing Bacteria***
