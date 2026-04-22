@@ -1,0 +1,723 @@
+---
+title: "16S Bacterial Community Analysis 2026 - IoM"
+author: "Dan Shelley"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+################################################################################
+#                                                                              #
+#            **IT IS RECOMMENDED TO RUN THIS RMD CHUNK BY CHUNK**              #
+#                                                                              #
+#         **THIS MARKDOWN CAN ALSO FUNCTION AS A CLASSIC 16S ANALYSIS**        #
+#                                                                              #
+################################################################################
+
+################################################################################
+#                                                                              #
+#                       **Methodology & Package Summary**                      #
+#                                                                              #
+#        * Phyloseq is used to generate a Phyloseq object from Qiime2          #
+#          outputs.                                                            #
+#                                                                              #
+#        * Taxa filtering: No Filtering for Taxa                               #
+#                                                                              #
+#                                                                              #
+#                                                                              #
+#                                                                              #
+#                                                                              #
+#                                                                              #
+#                                                                              #
+#                                                                              #
+#                                                                              #
+#                                                                              #
+#                                                                              #
+#                                                                              #
+#                                                                              #
+################################################################################
+
+################################################################################
+#                                                                              #
+#                            **Loading Libraries**                             #
+#                                                                              #
+################################################################################
+
+```{r library.loading, include=FALSE}
+#devtools::install_github("pmartinezarbizu/pairwiseAdonis/pairwiseAdonis")
+devtools::install_github("gauravsk/ranacapa")
+
+library(tidyverse)          #v1.2.0   - Used for data cleaning and manipulation.
+library(vegan)          #v2.7-3   - Plotting Random Forest MDS.
+library(ggplot2)        #v4.0.2   - Generic Plotting.
+library(ggpubr)         #v        - 
+library(FSA)            #v        - 
+library(stringr)        #v        - 
+library(ggh4x)          #v        -
+library(phyloseq)       #v1.50.0  - Generating objects to store Qiime2 outputs.
+library(microbial)      #v        - Phyloseq disperision statistical test.
+library(pairwiseAdonis) #v        - Pairwise PERMANOVA functions.
+```
+
+################################################################################
+#                                                                              #
+#                          **Defining Input Files**                            #
+#                                                                              #
+################################################################################
+
+```{r}
+ref_metadata_path        <- "C:/Users/Danie/OneDrive - Cardiff University/004 - Cardiff University - Senior Research Technician/IoM_Nov_2025/IoM_metadata.csv"
+ref_otu_table_path       <- "C:/Users/Danie/OneDrive - Cardiff University/004 - Cardiff University - Senior Research Technician/IoM_Nov_2025/qiime2output/exported_data/feature-table.tsv"
+ref_taxonomy_table_path  <- "C:/Users/Danie/OneDrive - Cardiff University/004 - Cardiff University - Senior Research Technician/IoM_Nov_2025/qiime2output/exported_data/taxonomy.tsv"
+ref_tree_path            <- "C:/Users/Danie/OneDrive - Cardiff University/004 - Cardiff University - Senior Research Technician/IoM_Nov_2025/qiime2output/exported_data/tree.nwk"
+
+output_directory <- "C:/Users/Danie/OneDrive - Cardiff University/004 - Cardiff University - Senior Research Technician/IoM_Nov_2025/16S_Output/"
+```
+
+################################################################################
+#                                                                              #
+#                       **Generating Phyloseq Object**                         #
+#                                                                              #
+################################################################################
+
+**NB: Remove the first line #BIOM and #OTU ID from the Feature Table Files prior to running**
+
+```{r read_in_reference_data}
+feature_table <- read.table(
+  ref_otu_table_path,
+  header = TRUE,
+  row.names = 1,
+  sep = "\t"
+)
+
+feature_table <- as.matrix(feature_table)
+feature_table <- otu_table(feature_table, taxa_are_rows = TRUE)
+
+
+taxonomy_table <- read.table(
+  ref_taxonomy_table_path,
+  sep = "\t",
+  header = TRUE,
+  row.names = 1
+)
+
+taxonomy_split <- strsplit(as.character(taxonomy_table$Taxon), ";")
+
+taxonomy_split_formatted <- lapply(taxonomy_split, function(x) {
+  length(x) <- 7
+  return(x)
+})
+
+taxonomy_mtx <- as.matrix(do.call(rbind, taxonomy_split_formatted))
+
+# Remove prefixes like "d__", "p__" etc.
+taxonomy_mtx <- sub("^[a-z]__*", "", taxonomy_mtx)  # removes d__, p__, etc.
+taxonomy_mtx[taxonomy_mtx == ""] <- NA # now we fill in the remaining empty gaps with NAs so R doesn't get confused
+
+# Set column names (use "Domain" or "Kingdom" as you prefer)
+colnames(taxonomy_mtx) <- c("Domain",
+                            "Phylum",
+                            "Class",
+                            "Order",
+                            "Family",
+                            "Genus",
+                            "Species")
+# Add back the ASV IDs which were lost from our original data frame
+rownames(taxonomy_mtx) <- rownames(taxonomy_table)
+
+# Convert to phyloseq tax_table object
+taxonomy_table <- phyloseq::tax_table(taxonomy_mtx)
+
+metadata_table <- read.csv(
+  ref_metadata_path,
+  row.names = 1,
+  na.strings = "",
+  stringsAsFactors = TRUE
+)
+
+# Match Metadata Sample IDs to those in the feature table
+metadata_table <- metadata_table[rownames(metadata_table) %in% colnames(feature_table), ]
+metadata_table$Sample.name <- rownames(metadata_table)
+
+metadata_table <- metadata_table %>%
+  mutate(
+    type = as.character(type),
+    type = if_else(
+      type == "shell_biofilm" & bioreactor %in% c("S10", "S3"),
+      paste0(type, "_", bioreactor),
+      type
+    ),
+    type = factor(type)
+  )
+
+metadata_table <- metadata_table %>%
+  mutate(
+    type = as.character(type),
+    type = if_else(
+      type == "outflow_drainage" & bioreactor %in% c("S10", "S3", "L"),
+      paste0(type, "_", bioreactor),
+      type
+    ),
+    type = factor(type)
+  )
+
+metadata_table$matrix_type <- metadata_table$matrix_type |>
+  as.character() |>
+  recode(
+    "bulk" = "Bulk",
+    "matrix" = "Matrix",
+    "precipitate" = "Precipitate",
+    .missing = "Other"
+  )
+
+metadata_table <- sample_data(metadata_table)
+
+rooted_tree <- read_tree(ref_tree_path)
+
+psq_obj_ref <- phyloseq(feature_table, taxonomy_table, metadata_table, rooted_tree)
+```
+
+################################################################################
+#                                                                              #
+#                              **Data Cleaning**                               #
+#                                                                              #
+################################################################################
+
+```{r}
+psq_obj_ref_no_small <- subset_samples(psq_obj_ref, !type %in% c("shell_biofilm_S3","outflow_drainage_S3"))
+
+## Removing taxa where total counts are <10
+physeq_filtered <- prune_taxa(
+  taxa_sums(psq_obj_ref_no_small) >= 10,
+  psq_obj_ref_no_small
+)
+
+sample_data(physeq_filtered)$Sequencing.depth <- sample_sums(physeq_filtered)
+```
+
+```{r check_ref_psq}
+
+sample_data(physeq_filtered)$type <- recode(
+  sample_data(physeq_filtered)$type,
+  "inflow_water" = "Influent",
+  "outflow_water" = "Effluent",
+  "outflow_drainage_S10" = "ED Sludge Shell",
+  "outflow_drainage_L" = "ED Sludge Limestone",
+  "shell_biofilm_S10" = "Shell",
+  "limestone_biofilm" = "Limestone",
+  "header_water" = "Header Tank"
+)
+
+sample_data(physeq_filtered)$type <- as.character(sample_data(physeq_filtered)$type)
+sample_data(physeq_filtered)$type <- factor(
+  sample_data(physeq_filtered)$type,
+  levels = c(
+    "Influent",
+    "Header Tank",
+    "Effluent",
+    "Shell",
+    "ED Sludge Shell",
+    "Limestone",
+    "ED Sludge Limestone"
+  )
+)
+
+sample_data(physeq_filtered)$types <- recode(
+  sample_data(physeq_filtered)$types,
+  "inflow_water" = "Inflow_Water",
+  "outflow_drainage" = "Outflow_Drainage",
+  "shell_biofilm_bulk" = "Bulk",
+  "shell_biofilm_matrix" = "Matrix",
+  "limestone_biofilm_bulk" = "Bulk",
+  "limestone_biofilm_matrix" = "Matrix",
+  "header_water" = "Header_Water",
+  "limestone_biofilm_ppt" = "Precipitate",
+  "outflow_water" = "Outflow_Water",
+  "shell_biofilm_ppt" = "Precipitate"
+)
+
+## Removing Control Groups
+physeq_filtered <- subset_samples(physeq_filtered, control != "Y")
+```
+
+```{r}
+
+#hcl.colors(9,"Dark2", alpha = 1)
+group_colours <- c(
+  "Influent"              = "#C87A8AFF",  # deep blue
+  "Header Tank"              = "#B9865FFF",  # neutral dark grey
+  "Effluent"             = "#9A9346FF",  # muted orange
+
+  "Shell"                       = "#00A1A9FF",  # soft green
+  "ED Sludge Shell"    = "#5F96C2FF",  # deeper green
+
+  "Limestone"                       = "#9E85C5FF",  # soft purple
+  "ED Sludge Limestone"    = "#C179B0FF"   # deeper purple
+)
+
+
+types_shape <- c(
+  "Bulk" = 15,
+  "Matrix" = 17,
+  "Precipitate" = 18,
+  "Other" = 16
+)
+```
+
+
+
+################################################################################
+#                                                                              #
+#       psq_obj_ref              : Full IoM Data, no small reactor             #
+#                                                                              #
+################################################################################
+
+
+################################################################################
+
+
+################################################################################
+#                                                                              #
+#                             **ALPHA DIVERSITY**                              #
+#                                                                              #
+################################################################################
+
+**(1.) ALPHA RAREFRACTION CURVE**
+
+```{r}
+
+# Define depths
+lib_sizes <- sample_sums(physeq_filtered)
+min_lib   <- min(lib_sizes)
+max_lib   <- max(lib_sizes)
+
+# Start with your candidate depths
+depths <- seq(1, max_lib, by = 1000)
+sample_var <- "Sample.name"
+
+# Initialize list
+richness_list <- list()
+
+for (d in depths) {
+  set.seed(2006576)
+  rare_dat <- rarefy_even_depth(physeq_filtered, sample.size = d, rngseed = 2006576, verbose = FALSE, replace = FALSE)
+
+  richness <- estimate_richness(rare_dat, measures = "Observed")
+  richness$SampleID <- rownames(richness)
+  richness$Depth <- d
+  richness_list[[as.character(d)]] <- richness
+}
+
+# Combine results
+rare_df <- bind_rows(richness_list)
+
+# Add metadata
+metadata <- data.frame(sample_data(physeq_filtered))
+metadata$SampleID <- rownames(metadata)
+rare_df <- left_join(rare_df, metadata, by = "SampleID")
+
+# Summarize mean & SE per group
+summary_df <- rare_df %>%
+  group_by(Depth, !!sym(sample_var)) %>%
+  mutate(
+    Richness_mean = mean(Observed, na.rm = TRUE),
+    Richness_se   = sd(Observed, na.rm = TRUE) / sqrt(n())
+  ) %>%
+  ungroup()
+```
+**(2.) Plotting Alpha Rarefraction Curve**
+
+```{r}
+
+Rare.plot <- ggplot(summary_df, aes(x = Depth, y = Richness_mean, group = SampleID, color = type)) +
+  geom_line(linewidth = 1) +
+  scale_color_manual(values = group_colours) +
+  scale_x_continuous(breaks = seq(0, 100000, by = 5000)) +
+  labs(x = "Sequencing Depth (n)", y = "Mean Observed ASVs (n)", color = "Stage") +
+  theme_bw()
+
+filename <- paste0(output_directory,"rarefraction_curve_Hurleston.svg")
+ggsave(filename, Rare.plot, height = 5, width = 10)
+```
+
+```{r}
+physeq_filtered <- rarefy_even_depth(physeq_filtered, 20000, rngseed = 202020)
+```
+
+
+
+**(3.) Calculating Alpha Diversity Distances**
+
+```{r}
+
+group      <- "type"   # column used for grouping
+ps11       <- physeq_filtered       # your phyloseq object
+
+
+# Extract sample metadata
+mapping <- phyloseq::sample_data(ps11)
+
+# Make sure all taxa have some non-zero counts
+ps11 <- phyloseq::filter_taxa(ps11, function(x) sum(x) > 0, prune = TRUE)
+
+# Rename the grouping column for clarity
+colnames(mapping) <- gsub(group, "Comparative_Group", colnames(mapping))
+
+# Create final grouping variable
+mapping$Group <- as.factor(mapping$Comparative_Group)
+
+# Convert OTU table into a standard count matrix (samples x taxa)
+count <- as.data.frame(t(ranacapa::vegan_otu(ps11)))
+
+# Transpose back for vegan functions that expect taxa as columns
+x <- t(count)
+
+# Shannon diversity
+Shannon <- vegan::diversity(x, index = "shannon")
+
+# Inverse Simpson
+Inv_Simpson <- vegan::diversity(x, index = "invsimpson")
+
+# Species richness (observed)
+Richness <- vegan::specnumber(x)
+
+# Prevalence (alternative richness measure)
+S2 <- rowSums(x > 0)
+
+# Pielou's evenness
+Pielou_evenness <- Shannon / log(Richness)
+
+# Simpson evenness
+Simpson_evenness <- Inv_Simpson / Richness
+
+# Chao1, ACE, and richness from estimateR
+est <- vegan::estimateR(x)
+ACE   <- est["S.ACE", ]
+
+# Combine all metrics into a single table
+report <- cbind(
+  Shannon,
+  Inv_Simpson,
+  Pielou_evenness,
+  Simpson_evenness,
+  Richness,
+  ACE
+)
+
+alp <- merge(mapping, report, by = "row.names", all = FALSE)
+
+# Store complete alpha-diversity table
+alpha_table <- alp
+
+# Select metrics to test
+metrics_to_test <- c(
+  "Shannon", "Inv_Simpson", "Pielou_evenness",
+  "Simpson_evenness", "Richness", "ACE"
+)
+
+
+data_for_test <- cbind(
+  data.frame(
+    ID = seq_len(nrow(alpha_table)),
+    Group = alpha_table$Group,
+    SampleID = alpha_table$Row.names,
+    Sequencing.depth = alpha_table$Sequencing.depth
+  ),
+  alpha_table[, metrics_to_test]
+)
+
+```
+
+## Linear Model for Distance vs Sequencing Depth
+
+**(4.) Plotting Distance Matrices**
+
+```{r fig.height=7, fig.width=7}
+data_for_test
+
+kruskal.test(Richness ~ Group, data = data_for_test)
+
+sigdf <- pairwise.wilcox.test(
+  x = data_for_test$Shannon,
+  g = data_for_test$Group,
+  p.adjust.method = "BH"
+)
+
+
+pw_df <- as.data.frame(as.table(sigdf$p.value)) %>%
+  rename(
+    group1 = Var1,
+    group2 = Var2,
+    p = Freq
+  ) %>%
+  filter(!is.na(p))
+
+
+pw_df <- pw_df %>%
+  mutate(
+    p.signif = case_when(
+      p <= 0.0001 ~ "****",
+      p <= 0.001  ~ "***",
+      p <= 0.01   ~ "**",
+      p <= 0.05   ~ "*",
+      TRUE        ~ "ns"
+    )
+  )
+
+
+pw_sig <- pw_df %>%
+  filter(p.signif != "ns")
+
+
+y_max <- max(data_for_test$Shannon, na.rm = TRUE)
+step  <- 0.05 * y_max
+
+pw_sig <- pw_sig %>%
+  arrange(p) %>%
+  mutate(y.position = y_max + row_number() * step)
+
+
+alpha_plot <- ggplot(data_for_test, aes(x = Group, y = Shannon, fill = Group)) +
+  geom_boxplot(alpha = 0.6, outlier.shape = NA) +
+  stat_boxplot(geom = "errorbar", width = 0.5) +
+  geom_point(aes(color = Group), size = 3, alpha = 0.6) +
+  scale_fill_manual(values = group_colours) +
+  scale_color_manual(values = group_colours) +
+  labs(fill = "", x = "", y = "Shannon Index") +
+  ylim(0,8) +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 35, vjust = 1, hjust=1)) +
+  guides(color = "none") +
+  ggpubr::stat_pvalue_manual(
+    pw_sig,
+    label = "p.signif",
+    tip.length = 0.01
+  )
+
+filename <- paste0(output_directory,"Alpha_Shannon.svg")
+ggsave(filename, alpha_plot, height = 5, width = 7.5)
+
+
+```
+
+
+################################################################################
+#                                                                              #
+#                              **BETA  DIVERSITY**                             #
+#                                                                              #
+################################################################################
+
+**(1.) IoM Data Normalisation**
+
+```{r}
+psq_obj_ref_rel <- normalize(physeq_filtered, method = "relative")
+
+psq_obj_ref_rel <- prune_taxa(taxa_sums(psq_obj_ref_rel) > 0, psq_obj_ref_rel)
+
+IoM_beta <- plotbeta(psq_obj_ref_rel, group = "type", shape = "matrix_type") + 
+  labs(colour = "",
+       shape = "") +
+  stat_ellipse(aes(group = type), lty = "dashed") +
+  scale_shape_manual(values = types_shape) +
+  scale_colour_manual(values = group_colours)
+
+filename <- paste0(output_directory,"beta_diversity_Hurleston.svg")
+ggsave(filename, IoM_beta, height = 5, width = 7.5)
+```
+
+**(2.) PERMANOVA: Statistically comparing microbial community similarities**
+
+```{r}
+
+ps_tr <- microbiome::transform(psq_obj_ref_rel, "clr")
+ps_dist_matrix <- phyloseq::distance(psq_obj_ref_rel, method ="bray")
+
+sample_data(ps_tr)$batch.name <- as.character(sample_data(ps_tr)$type)
+ps_tr <- subset_samples(ps_tr, type !="NA")
+
+vegan::adonis2(ps_dist_matrix ~ phyloseq::sample_data(ps_tr)$type)
+pairwise.adonis(ps_dist_matrix, phyloseq::sample_data(ps_tr)$type)
+permutest(betadisper(ps_dist_matrix, group = phyloseq::sample_data(ps_tr)$type), pairwise = TRUE)
+
+```
+
+################################################################################
+#                                                                              #
+#                           **TAXONOMIC BAR PLOTS**                            #
+#                                                                              #
+################################################################################
+
+**(1.) IoM**
+
+```{r, fig.height=7.5, fig.width=7.5}
+
+plotbar(psq_obj_ref_rel, level = "Family", group = "type", top = 20, fontsize.x = 7.5, fontsize.y = 7.5) +
+  labs(y = "Relative Abundance", x = "Sample")
+
+```
+
+
+
+################################################################################
+#                                                                              #
+#                           **TAXONOMIC DOT PLOTS**                            #
+#                                                                              #
+################################################################################
+
+**(1.) Overview of Hurleston**
+
+```{r, fig.height=10, fig.width=7.5}
+physeq_filtered_gen <- tax_glom(physeq_filtered, taxrank = "Genus")
+psq_obj_ref_rel <- normalize(physeq_filtered_gen, method = "relative")
+psq_obj_ref_rel <- prune_taxa(taxa_sums(psq_obj_ref_rel) > 0, psq_obj_ref_rel)
+
+
+df_psq_fam <- psmelt(psq_obj_ref_rel)
+
+genera <- c(
+  "Terrimonas",
+  "Stenotrophomonas",
+  "Sphingorhabdus",
+  "Sphingopyxis",
+  "Sphingomonas",
+  "Shewanella",
+  "Reyranella",
+  "Pseudonocardia",
+  "Pseudomonas",
+  "Pedobacter",
+  "Novosphingobium",
+  "Nocardia",
+  "Nitrospira",
+  "Mycobacterium",
+  "Microbacterium",
+  "Methylobacterium",
+  "Leptolyngbya",
+  "Hyphomicrobium",
+  "Flavobacterium",
+  "Duganella",
+  "Caulobacter",
+  "Brevundimonas",
+  "Brevibacterium",
+  "Bosea",
+  "Afipia"
+)
+
+
+df_psq_fam_filtered <- df_psq_fam %>%
+  filter(Genus %in% genera)
+
+
+df_psq_fam_filtered <- df_psq_fam_filtered %>%
+  filter(Abundance > 0)
+
+
+mn_plot <-ggplot(
+  df_psq_fam_filtered,
+  aes(
+    x = Sample,
+    y = Genus,
+    size = Abundance,
+    color = Genus
+  )
+) +
+  geom_point(alpha = 0.8) +
+  facet_wrap(~ type, scales = "free_x") +
+  theme_bw() +
+  xlab("") +
+  ylab("Genus") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+  
+filename <- paste0(output_directory,"Mn_Tax_plot.svg")
+ggsave(filename, mn_plot, height = 10, width = 7.5)
+
+######## Potential Nitrifying 
+df_psq_fam <- psmelt(psq_obj_ref_rel)
+
+taxa_keep <- c(
+  "Candidatus_Anammoximicrobium",
+  "Nitrosarchaeum",
+  "Nitrosomonadaceae",
+  "Nitrosomonas",
+  "Nitrosospira",
+  "Planctomycetota"
+)
+
+
+psq_subset <- subset_taxa(
+  psq_obj_ref_rel,
+  Genus %in% taxa_keep |
+  Family %in% taxa_keep |
+  Phylum %in% taxa_keep
+)
+
+df_limited <- psmelt(psq_subset)
+
+
+df_limited <- df_limited %>%
+  mutate(
+    taxa = case_when(
+      !is.na(Genus)  ~ Genus,
+      !is.na(Family) ~ Family,
+      !is.na(Phylum) ~ Phylum,
+      TRUE           ~ NA_character_
+    )
+  )
+
+df_limited <- df_limited %>%
+  filter(Abundance > 0)
+
+Nit_plot <-ggplot(
+  df_limited,
+  aes(
+    x = Sample,
+    y = Family,
+    size = Abundance,
+    color = Family
+  )
+) +
+  geom_point(alpha = 1) +
+  facet_wrap(~ type, scales = "free_x") +
+  theme_bw() +
+  xlab("") +
+  ylab("Genus") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+
+############# Micritisation
+
+
+micritization_genera <- c(
+  "Mastigocoleus",
+  "Tessarococcus",
+  "Halomonas",
+  "Virgibacillus",
+  "Desulfovibrio",
+  "Desulfosarcina",
+  "Desulfococcus",
+  "Sporosarcina",
+  "Achromatium",
+  "Methylosinus"
+)
+
+df_psq_fam_filtered <- df_psq_fam %>%
+  filter(Genus %in% micritization_genera)
+
+
+df_psq_fam_filtered <- df_psq_fam_filtered %>%
+  filter(Abundance > 0)
+
+
+mit_plot <-ggplot(
+  df_psq_fam_filtered,
+  aes(
+    x = Sample,
+    y = Genus,
+    size = Abundance,
+    color = Genus
+  )
+) +
+  geom_point(alpha = 0.8) +
+  facet_wrap(~ type, scales = "free_x") +
+  theme_bw() +
+  xlab("") +
+  ylab("Genus") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+```
