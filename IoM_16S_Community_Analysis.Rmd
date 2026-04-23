@@ -160,13 +160,35 @@ metadata_table <- metadata_table %>%
     type = factor(type)
   )
 
+metadata_table <- metadata_table %>%
+  mutate(
+    type = as.character(type),
+    type = if_else(
+      type == "outflow_drainage" & bioreactor %in% c("S10", "S3", "L"),
+      paste0(type, "_", bioreactor),
+      type
+    ),
+    type = factor(type)
+  )
+
+metadata_table$matrix <- metadata_table$matrix |>
+  as.character() |>
+  recode(
+    "inflow_water" = "Influent",
+    "header_water" = "Header Tank",
+    "shell" = "Shell",
+    "limestone" = "Limestone"
+  )
+
 metadata_table$matrix_type <- metadata_table$matrix_type |>
   as.character() |>
   recode(
     "bulk" = "Bulk",
     "matrix" = "Matrix",
     "precipitate" = "Precipitate",
-    .missing = "Other"
+    "water" = "Water",
+    "outflow_water" = "Effluent",
+    "ed_sludge" = "ED Sludge"
   )
 
 metadata_table <- sample_data(metadata_table)
@@ -183,7 +205,7 @@ psq_obj_ref <- phyloseq(feature_table, taxonomy_table, metadata_table, rooted_tr
 ################################################################################
 
 ```{r}
-psq_obj_ref_no_small <- subset_samples(psq_obj_ref, !type %in% c("shell_biofilm_S3","outflow_drainage_S3"))
+psq_obj_ref_no_small <- subset_samples(psq_obj_ref, bioreactor != "S3")
 
 ## Removing taxa where total counts are <10
 physeq_filtered <- prune_taxa(
@@ -235,16 +257,22 @@ sample_data(physeq_filtered)$types <- recode(
   "shell_biofilm_ppt" = "Precipitate"
 )
 
+
 sample_data(physeq_filtered)$matrix_type <- as.character(sample_data(physeq_filtered)$matrix_type)
 sample_data(physeq_filtered)$matrix_type <- factor(
   sample_data(physeq_filtered)$matrix_type,
   levels = c(
+    "Water",
     "Bulk",
     "Matrix",
-    "Precipertate",
-    "Other"
+    "Precipitate",
+    "ED Sludge",
+    "Effluent"
   )
 )
+
+
+
 
 ## Removing Control Groups
 physeq_filtered <- subset_samples(physeq_filtered, control != "Y")
@@ -259,19 +287,21 @@ group_colours <- c(
   "Effluent"             = "#9A9346FF",  # muted orange
 
   "Shell"                       = "#00A1A9FF",  # soft green
-  "ED Sludge Shell"    = "#5F96C2FF",  # deeper green
 
-  "Limestone"                       = "#9E85C5FF",  # soft purple
-  "ED Sludge Limestone"    = "#C179B0FF"   # deeper purple
+  "Limestone"                       = "#9E85C5FF"  # soft purple
 )
+
 
 
 types_shape <- c(
-  "Bulk" = 15,
-  "Matrix" = 17,
-  "Precipitate" = 18,
-  "Other" = 16
+  "Water"        = 15,  # filled circle
+  "Bulk"         = 16,  # filled square
+  "Matrix"       = 17,  # filled diamond
+  "Precipitate"  = 18,  # filled triangle up
+  "ED Sludge"    = 25,  # filled triangle down
+  "Effluent"     = 20   # filled square (solid)
 )
+
 ```
 
 
@@ -353,6 +383,7 @@ ggsave(filename, Rare.plot, height = 5, width = 10)
 
 ```{r}
 physeq_filtered <- rarefy_even_depth(physeq_filtered, 20000, rngseed = 202020)
+physeq_filtered <- tax_glom(physeq_filtered, taxrank = "Family")
 ```
 
 
@@ -521,7 +552,7 @@ ggsave(filename, alpha_plot, height = 5, width = 7)
 psq_obj_ref_rel <- normalize(physeq_filtered, method = "relative")
 psq_obj_ref_rel <- prune_taxa(taxa_sums(psq_obj_ref_rel) > 0, psq_obj_ref_rel)
 
-IoM_beta <- plotbeta(psq_obj_ref_rel, group = "type", shape = "matrix_type") + 
+IoM_beta <- plotbeta(psq_obj_ref_rel, group = "matrix", shape = "matrix_type") + 
   labs(colour = "",
        shape = "") +
   scale_shape_manual(values = types_shape) +
@@ -557,15 +588,94 @@ pairwise.adonis(IoM_BC_Dist ~ subset(sample_data(psq_obj_ref_rel), type %in% c("
 
 ```
 
+***Extracting Specific Microbial Groups***
+```{r}
+### Standardised Relative Phyloseq to use for all
+psq_obj_ref_rel <- normalize(physeq_filtered, method = "relative")
+psq_obj_ref_rel <- prune_taxa(taxa_sums(psq_obj_ref_rel) > 0, psq_obj_ref_rel)
+```
+
+
+
 ***Mn(II) Oxidisers***
 
 
 
 ***Fe(II) Oxidisers***
 
+```{r}
+iron_oxidisers <- c(
+  "Gallionellaceae",
+  "Ferritrophicaceae",
+  "Thiobacillaceae",
+  "Chromobacteriaceae",
+  "Sphaerotilaceae",
+  "Acidithiobacillaceae",
+  "Nitrobacteraceae",
+  "Paracoccaceae",
+  "Comamonadaceae",
+  "Geobacteraceae"
+)
+
+psq_FeOx <- subset_taxa(
+  psq_obj_ref_rel,
+  Family %in% iron_oxidisers
+)
+
+FeOx_OTU <- psmelt(psq_FeOx)
+
+FeOx_OTU$Phylum[FeOx_OTU$Phylum == "Proteobacteria"] <- "Pseudomonadota"
+
+FeOx_plot <- ggplot(
+  data = dplyr::filter(FeOx_OTU, Abundance > 0),
+  aes(
+    x = Sample,
+    y = Family,
+    size = Abundance,
+    color = Family
+  )
+) +
+  geom_point(alpha = 0.8) +
+  theme_bw() +
+  xlab("") +
+  ylab("Family") +
+  ggh4x::facet_nested(
+    rows = vars(Phylum, Family),
+    cols = vars(matrix, matrix_type),
+    scales = "free",
+    space = "free",
+    switch = "both"
+  ) +
+  scale_size_continuous(range = c(0, 15)) +
+  guides(
+    color = "none",
+    size  = guide_legend(
+      title = "Relative\nAbundance",
+      override.aes = list(color = "grey30")
+    )
+  ) +
+  theme(
+    strip.text.y.left = element_text(size = 12, angle = 30, lineheight = 0.25),
+    strip.text.x.bottom = element_text(size = 12, angle = 30),
+    strip.text.x = element_text(margin = margin(t = 1, b = 1)),
+    axis.title.y = element_blank(),
+    axis.text.y = element_blank(),
+    axis.ticks.y = element_blank(),
+    axis.text.x = element_blank(),
+    axis.ticks.x = element_blank(),
+    legend.position = "right",
+    plot.title.position = "plot",
+    plot.title = element_text(size = 12)
+  ) +
+  ggtitle("          Phylum                    Family")
+
+filename <- paste0(output_directory,"FeOx_IoM.svg")
+ggsave(filename, FeOx_plot, height = 6, width = 16)
+```
 
 
 ***Nitrifying Bacteria***
 
 
 ***Micritizing Bacteria***
+
