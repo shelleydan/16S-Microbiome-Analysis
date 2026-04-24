@@ -579,12 +579,7 @@ TukeyHSD(bc_dist_disp)
 vegan::adonis2(IoM_BC_Dist ~ phyloseq::sample_data(psq_obj_ref_rel)$type)
 
 ########## Pairwise PERMANOVA ########## 
-IoM_BC_Dist_SL_psq <- subset_samples(physeq_filtered, type %in% c("Shell","Limestone"))
-IoM_BC_Dist_SL <- distance(IoM_BC_Dist_SL_psq, method ="bray")
-
-pairwise.adonis(IoM_BC_Dist, phyloseq::sample_data(psq_obj_ref_rel)$type)
-
-pairwise.adonis(IoM_BC_Dist ~ subset(sample_data(psq_obj_ref_rel), type %in% c("Shell","Limestone")))
+pairwise.adonis(IoM_BC_Dist, phyloseq::sample_data(psq_obj_ref_rel)$matrix)
 
 ```
 
@@ -599,6 +594,91 @@ psq_obj_ref_rel <- prune_taxa(taxa_sums(psq_obj_ref_rel) > 0, psq_obj_ref_rel)
 
 ***Mn(II) Oxidisers***
 
+```{r}
+manganese_oxidisers <- c(
+  "Nitrobacteraceae",
+  "Alloboseaceae",
+  "Caulobacteraceae",
+  "Cellulomonadaceae",
+  "Cytophagaceae",
+  "Oxalobacteraceae",
+  "Flavobacteriaceae",
+  "Hyphomicrobiaceae",
+  "Methylobacteriaceae",
+  "Microbacteriaceae",
+  "Mycobacteriaceae",
+  "Nitrospiraceae",
+  "Nocardiaceae",
+  "Pseudomonadaceae",
+  "Paracoccaceae",
+  "Shewanellaceae",
+  "Sphingomonadaceae",
+  "Streptomycetaceae",
+  "Chitinophagaceae",
+  "Comamonadaceae",
+  "Reyranellaceae",
+  "Lysobacteraceae",
+  "Leptolyngbyaceae",
+  "Brevibacteriaceae"
+)
+
+psq_MnOx <- subset_taxa(
+  psq_obj_ref_rel,
+  Family %in% manganese_oxidisers
+)
+
+MnOx_OTU <- psmelt(psq_MnOx)
+
+MnOx_OTU$Phylum[MnOx_OTU$Phylum == "Proteobacteria"] <- "Pseudomonadota"
+MnOx_OTU$Phylum[MnOx_OTU$Phylum == "Actinobacteriota"] <- "Actinomycetota"
+MnOx_OTU$Phylum[MnOx_OTU$Phylum == "Cyanobacteria"] <- "Cyanobacteriota"
+
+MnOx_plot <- ggplot(
+  data = dplyr::filter(MnOx_OTU, Abundance > 0),
+  aes(
+    x = Sample,
+    y = Family,
+    size = Abundance,
+    color = Family
+  )
+) +
+  geom_point(alpha = 0.8) +
+  theme_bw() +
+  xlab("") +
+  ylab("Family") +
+  ggh4x::facet_nested(
+    rows = vars(Phylum, Family),
+    cols = vars(matrix, matrix_type),
+    scales = "free",
+    space = "free",
+    switch = "both"
+  ) +
+  scale_size_continuous(range = c(0, 15)) +
+  guides(
+    color = "none",
+    size  = guide_legend(
+      title = "Relative\nAbundance",
+      override.aes = list(color = "grey30")
+    )
+  ) +
+  theme(
+    strip.text.y.left = element_text(size = 12, angle = 20, lineheight = 0.25),
+    strip.text.x.bottom = element_text(size = 12, angle = 20),
+    strip.text.x = element_text(margin = margin(t = 1, b = 1)),
+    axis.title.y = element_blank(),
+    axis.text.y = element_blank(),
+    axis.ticks.y = element_blank(),
+    axis.text.x = element_blank(),
+    axis.ticks.x = element_blank(),
+    legend.position = "right",
+    plot.title.position = "plot",
+    plot.title = element_text(size = 12)
+  ) +
+  ggtitle("           Phylum                         Family")
+
+filename <- paste0(output_directory,"MnOx_IoM.svg")
+ggsave(filename, MnOx_plot, height = 15, width = 16)
+```
 
 
 ***Fe(II) Oxidisers***
@@ -655,8 +735,8 @@ FeOx_plot <- ggplot(
     )
   ) +
   theme(
-    strip.text.y.left = element_text(size = 12, angle = 30, lineheight = 0.25),
-    strip.text.x.bottom = element_text(size = 12, angle = 30),
+    strip.text.y.left = element_text(size = 12, angle = 20, lineheight = 0.25),
+    strip.text.x.bottom = element_text(size = 12, angle = 20),
     strip.text.x = element_text(margin = margin(t = 1, b = 1)),
     axis.title.y = element_blank(),
     axis.text.y = element_blank(),
@@ -667,7 +747,7 @@ FeOx_plot <- ggplot(
     plot.title.position = "plot",
     plot.title = element_text(size = 12)
   ) +
-  ggtitle("          Phylum                    Family")
+  ggtitle("           Phylum                      Family")
 
 filename <- paste0(output_directory,"FeOx_IoM.svg")
 ggsave(filename, FeOx_plot, height = 6, width = 16)
@@ -676,6 +756,134 @@ ggsave(filename, FeOx_plot, height = 6, width = 16)
 
 ***Nitrifying Bacteria***
 
+```{r}
+nitrifiction_microbes <- c(
+  "Nitrosomonadaceae",
+  "Nitrospiraceae",
+  "Nitrosopumilaceae"
+)
+
+psq_NO <- subset_taxa(
+  psq_obj_ref_rel,
+  Family %in% nitrifiction_microbes
+)
+
+NO_OTU <- psmelt(psq_NO)
+
+NO_OTU$Phylum[NO_OTU$Phylum == "Proteobacteria"] <- "Pseudomonadota"
+
+NO_plot <- ggplot(
+  data = dplyr::filter(NO_OTU, Abundance > 0),
+  aes(
+    x = Sample,
+    y = Family,
+    size = Abundance,
+    color = Family
+  )
+) +
+  geom_point(alpha = 0.8) +
+  theme_bw() +
+  xlab("") +
+  ylab("Family") +
+  ggh4x::facet_nested(
+    rows = vars(Phylum, Family),
+    cols = vars(matrix, matrix_type),
+    scales = "free",
+    space = "free",
+    switch = "both"
+  ) +
+  scale_size_continuous(range = c(0, 15)) +
+  guides(
+    color = "none",
+    size  = guide_legend(
+      title = "Relative\nAbundance",
+      override.aes = list(color = "grey30")
+    )
+  ) +
+  theme(
+    strip.text.y.left = element_text(size = 12, angle = 20, lineheight = 0.25),
+    strip.text.x.bottom = element_text(size = 12, angle = 20),
+    strip.text.x = element_text(margin = margin(t = 1, b = 1)),
+    axis.title.y = element_blank(),
+    axis.text.y = element_blank(),
+    axis.ticks.y = element_blank(),
+    axis.text.x = element_blank(),
+    axis.ticks.x = element_blank(),
+    legend.position = "right",
+    plot.title.position = "plot",
+    plot.title = element_text(size = 12)
+  ) +
+  ggtitle("           Phylum                      Family")
+
+filename <- paste0(output_directory,"NO_IoM.svg")
+ggsave(filename, FeOx_plot, height = 6, width = 16)
+```
 
 ***Micritizing Bacteria***
 
+```{r}
+CaCO3_micritizers <- c(
+  "Cyanobacteriaceae",
+  "Hapalosiphonaceae",
+  "Propionibacteriaceae",
+  "Desulfosarcinaceae",
+  "Caryophanaceae",
+  "Bacillaceae"
+)
+
+psq_CaCO3_Mic <- subset_taxa(
+  psq_obj_ref_rel,
+  Family %in% CaCO3_micritizers
+)
+
+CaCO3_Mic_OTU <- psmelt(psq_CaCO3_Mic)
+
+CaCO3_Mic_OTU$Phylum[CaCO3_Mic_OTU$Phylum == "Cyanobacteria"] <- "Cyanobacteriota"
+
+CaCO3_Mic_plot <- ggplot(
+  data = CaCO3_Mic_OTU,
+  aes(
+    x = Sample,
+    y = Family,
+    size = Abundance,
+    color = Family
+  )
+) +
+  geom_point(alpha = 0.8) +
+  theme_bw() +
+  xlab("") +
+  ylab("Family") +
+  ggh4x::facet_nested(
+    rows = vars(Phylum, Family),
+    cols = vars(matrix, matrix_type),
+    scales = "free",
+    space = "free",
+    switch = "both"
+  ) +
+  scale_size_continuous(range = c(-1, 15)) +
+  guides(
+    color = "none",
+    size  = guide_legend(
+      title = "Relative\nAbundance",
+      override.aes = list(color = "grey30")
+    )
+  ) +
+  theme(
+    strip.text.y.left = element_text(size = 12, angle = 20, lineheight = 0.25),
+    strip.text.x.bottom = element_text(size = 12, angle = 20),
+    strip.text.x = element_text(margin = margin(t = 1, b = 1)),
+    axis.title.y = element_blank(),
+    axis.text.y = element_blank(),
+    axis.ticks.y = element_blank(),
+    axis.text.x = element_blank(),
+    axis.ticks.x = element_blank(),
+    legend.position = "right", 
+    legend.margin = margin(t = 50),
+    plot.title.position = "plot",
+    plot.title = element_text(size = 12)
+  ) +
+  ggtitle("           Phylum                      Family")
+
+filename <- paste0(output_directory,"CaCO3_Mic_IoM.svg")
+ggsave(filename, CaCO3_Mic_plot, height = 3, width = 16)
+```
